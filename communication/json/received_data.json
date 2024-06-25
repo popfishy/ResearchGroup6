@@ -1,0 +1,146 @@
+{
+    "102401": {
+        "agentId": 102401,
+        "altitude": 0,
+        "camp": 1, 
+        "entityType": 104,
+        "latitude": 24.4806671,
+        "longitude": 119.6128182,
+        "name": "电子侦察巡飞蜂群子弹-102401",
+        "upEntityID": 1024,
+        "velocity": 600
+    },
+    "102413": {
+        "agentId": 102413,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4806671,
+        "longitude": 119.6128182,
+        "name": "察打一体巡飞蜂群子弹-102413",
+        "upEntityID": 1024,
+        "velocity": 600
+    },
+    "102418": {
+        "agentId": 102418,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4806671,
+        "longitude": 119.6128182,
+        "name": "察打一体巡飞蜂群子弹-102418",
+        "upEntityID": 1024,
+        "velocity": 600
+    },
+    "102421": {
+        "agentId": 102421,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4806671,
+        "longitude": 119.6128182,
+        "name": "察打一体巡飞蜂群子弹-102421",
+        "upEntityID": 1024,
+        "velocity": 600
+    },
+    "102516": {
+        "agentId": 102516,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4511887,
+        "longitude": 119.5982324,
+        "name": "察打一体巡飞蜂群子弹-102516",
+        "upEntityID": 1025,
+        "velocity": 600
+    },
+    "102521": {
+        "agentId": 102521,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4511887,
+        "longitude": 119.5982324,
+        "name": "察打一体巡飞蜂群子弹-102521",
+        "upEntityID": 1025,
+        "velocity": 600
+    },
+    "102523": {
+        "agentId": 102523,
+        "altitude": 0,
+        "camp": 1,
+        "entityType": 106,
+        "latitude": 24.4511887,
+        "longitude": 119.5982324,
+        "name": "察打一体巡飞蜂群子弹-102523",
+        "upEntityID": 1025,
+        "velocity": 600
+    },
+    "key": "answer_RequestMission",
+    "name": "PusimTcpSocket",
+    "sendScheduleGroup": [
+        {
+            "agentId": 102401,
+            "altitude": 200,
+            "beginTime": 292,
+            "expectedDuration": 300,
+            "latitude": 24.78116,
+            "longitude": 120.90139,
+            "taskCode": "p3"
+        },
+        {
+            "agentId": 102413,
+            "altitude": 200,
+            "beginTime": 296,
+            "expectedDuration": 300,
+            "latitude": 24.79647,
+            "longitude": 120.904095,
+            "taskCode": "p201"
+        },
+        {
+            "agentId": 102418,
+            "altitude": 200,
+            "beginTime": 301,
+            "expectedDuration": 300,
+            "latitude": 24.81178,
+            "longitude": 120.9068,
+            "taskCode": "p5"
+        },
+        {
+            "agentId": 102421,
+            "altitude": 200,
+            "beginTime": 292,
+            "expectedDuration": 300,
+            "latitude": 24.78116,
+            "longitude": 120.90139,
+            "taskCode": "p3"
+        },
+        {
+            "agentId": 102516,
+            "altitude": 200,
+            "beginTime": 299,
+            "expectedDuration": 300,
+            "latitude": 24.75054,
+            "longitude": 120.89598,
+            "taskCode": "p1"
+        },
+        {
+            "agentId": 102521,
+            "altitude": 200,
+            "beginTime": 295,
+            "expectedDuration": 300,
+            "latitude": 24.76585,
+            "longitude": 120.898685,
+            "taskCode": "p200"
+        },
+        {
+            "agentId": 102523,
+            "altitude": 200,
+            "beginTime": 295,
+            "expectedDuration": 300,
+            "latitude": 24.76585,
+            "longitude": 120.898685,
+            "taskCode": "p200"
+        }
+    ]
+}
