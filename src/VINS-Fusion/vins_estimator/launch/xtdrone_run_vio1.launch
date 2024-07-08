@@ -1,0 +1,20 @@
+<launch>
+    <!-- iris_0 -->
+    <group ns="iris_0">
+        <!-- VINS-Fusion -->
+        <node pkg="vins" type="vins_node" name="vins_estimator" args="$(find vins)/../config/xtdrone_sitl/iris_0_px4_sitl_config.yaml" />
+    </group>
+
+    <!-- <group ns="iris_1">
+        <node pkg="vins" type="vins_node" name="vins_estimator" args="$(find vins)/../config/xtdrone_sitl/iris_1_px4_sitl_config.yaml" />
+    </group>
+
+    <group ns="iris_2">
+        <node pkg="vins" type="vins_node" name="vins_estimator" args="$(find vins)/../config/xtdrone_sitl/iris_2_px4_sitl_config.yaml" />
+    </group>
+
+    <group ns="iris_3">
+        <node pkg="vins" type="vins_node" name="vins_estimator" args="$(find vins)/../config/xtdrone_sitl/iris_3_px4_sitl_config.yaml" />
+    </group> -->
+
+</launch>
