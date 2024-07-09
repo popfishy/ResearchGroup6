@@ -10,11 +10,11 @@ clear
 alias python="python3"
 
 #定义变量
-UAV_NUM=4
+UAV_NUM=9
 
 gnome-terminal -- bash -c "cd ~/XTDrone/motion_planning/3d && python ego_swarm_transfer.py iris $UAV_NUM"
 sleep 0.5
-gnome-terminal -- bash -c "cd ~/XTDrone/motion_planning/3d && rviz -d ego_swarm_rviz.rviz"
+gnome-terminal -- bash -c "cd ~/XTDrone/motion_planning/3d && rviz -d ego_swarm_rviz_9.rviz"
 sleep 0.5
-#gnome-terminal -- bash -c "roslaunch ego_planner multi_uav.launch"
-# gnome-terminal -- bash -c 'cd ~/XTDrone/motion_planning/3d"&& echo "bash ego_swarm2_goal.sh"; exec bash'
+# gnome-terminal -- bash -c "roslaunch ego_planner multi_uav.launch"
+# gnome-terminal -- bash -c 'cd ~/catkin_ws/src/ego_planner"&& echo "bash ego_swarm2_goal.sh"; exec bash'
