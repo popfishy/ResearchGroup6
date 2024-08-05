@@ -1,0 +1,6 @@
+# DronePlans.srv
+# request
+EntitySrv[] way_point_path
+---
+# reply
+EntitySrv[] way_point_path
