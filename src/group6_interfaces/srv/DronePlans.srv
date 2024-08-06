@@ -1,6 +1,5 @@
-# DronePlans.srv
 # request
-AgentData[] agents_data
+group6_interfaces/AgentData[] agents_data
 ---
 # reply
-Bool success
+std_msgs/Bool success
