@@ -1,2 +1,2 @@
 # Multipath.msg
-Target[] path
+Target[] targets

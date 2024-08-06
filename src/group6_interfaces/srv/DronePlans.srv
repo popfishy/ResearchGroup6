@@ -1,6 +1,6 @@
 # DronePlans.srv
 # request
-EntitySrv[] way_point_path
+AgentData[] agents_data
 ---
 # reply
-EntitySrv[] way_point_path
+Bool success
