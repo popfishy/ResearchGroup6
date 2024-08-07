@@ -60,10 +60,10 @@ class AgentPlan:
         planned_results = json_data.get("Planned_result", [])
         return [cls.from_dict(plan_entry) for plan_entry in planned_results]
 
-    @classmethod
-    def to_drone_plan_list(cls, agent_plans):
-        """Converts list of AgentPlan instances to DronePlan list."""
-        return [{"id": plan.agentId, "longitude": wp.longitude} for plan in agent_plans for wp in plan.path]
+    # @classmethod
+    # def to_drone_plan_list(cls, agent_plans):
+    #     """Converts list of AgentPlan instances to DronePlan list."""
+    #     return [{"id": plan.agentId, "longitude": wp.longitude} for plan in agent_plans for wp in plan.path]
 
 
 class JsonReassembler:
@@ -79,7 +79,9 @@ class JsonReassembler:
 
         self.agents_plan_pub = rospy.Publisher("/AgentsData", AgentsData, queue_size=1)
         if test_flag:
-            self.reassemble_data_then_pub()
+            for i in range(2):
+                rospy.sleep(10)
+                self.reassemble_data_then_pub()
 
     def callback(self, data):
         # 处理接收到的消息
