@@ -102,6 +102,7 @@ class GVF_ode_node:
                     self.pub_set[k].publish(target)
                 rospy.sleep(0.25)
 
+    # 发布订阅的写法
     # def callback(self, agents_msg):
     #     print("接收到数据")
     #     # self.uav_num = len(agents_msg.agents_data)
