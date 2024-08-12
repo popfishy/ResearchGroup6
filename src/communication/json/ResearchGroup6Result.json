@@ -1,0 +1,28 @@
+{
+  "key": "SwarmTrajectoryResults",
+  "name": "ResearchGroup6",
+  "timestamp": 50,
+  "agents":[
+    {
+      "agentId":102601,
+      "velocity":60,
+      "altitude": 200,
+      "latitude": 24.4434194,
+      "longitude": 119.6982324,
+      "yaw": 0.31,
+      "picth": 0.23,
+      "roll": 0.12
+    },
+    {
+      "agentId":102605,
+      "velocity":60,
+      "altitude": 200,
+      "latitude": 24.4434194,
+      "longitude": 119.6982324,
+      "yaw": 0.31,
+      "picth": 0.23,
+      "roll": 0.12 
+    }
+  ]
+
+}

@@ -1,0 +1,297 @@
+{
+  "Planned_result": [
+    {
+        "agentId": 103019,
+        "beginTime": 2294,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 8,
+        "latitude": 24.79647,
+        "longitude": 120.904095,
+        "order": 2,
+        "status": 0,
+        "taskCode": "p201",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+    {
+        "agentId": 103019,
+        "beginTime": 2632,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 9,
+        "latitude": 24.78116,
+        "longitude": 120.90139,
+        "order": 1,
+        "status": 0,
+        "taskCode": "p3",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+    {
+        "agentId": 103020,
+        "beginTime": 2932,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 9,
+        "latitude": 24.78116,
+        "longitude": 120.90139,
+        "order": 1,
+        "status": 0,
+        "taskCode": "p3",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+    {
+        "agentId": 103030,
+        "beginTime": 3232,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 9,
+        "latitude": 24.78116,
+        "longitude": 120.90139,
+        "order": 1,
+        "status": 0,
+        "taskCode": "p3",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+    {
+        "agentId": 103032,
+        "beginTime": 3532,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 9,
+        "latitude": 24.78116,
+        "longitude": 120.90139,
+        "order": 1,
+        "status": 0,
+        "taskCode": "p3",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+    {
+        "agentId": 103019,
+        "beginTime": 3832,
+        "altitude": 200,
+        "expectedDuration": 300,
+        "expectedQuantity": 8,
+        "latitude": 24.78116,
+        "longitude": 120.90139,
+        "order": 1,
+        "status": 0,
+        "taskCode": "p7",
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+      {
+          "agentId": 103015,
+          "beginTime": 2645,
+          "altitude": 200,
+          "expectedDuration": 300,
+          "expectedQuantity": 9,
+          "latitude": 24.78116,
+          "longitude": 120.90139,
+          "order": 1,
+          "status": 0,
+          "taskCode": "p3",
+          "taskPhase": "1",
+          "path": [
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.6982324,
+                "timestep": 1,
+                "velocity": 60
+            },
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.7982324,
+                "timestep": 2,
+                "velocity": 60
+            }
+        ]
+      },
+      {
+        "agentId": 103015,
+        "beginTime": 2307,   
+        "altitude": 200,     
+        "expectedDuration": 300,   
+        "expectedQuantity": 8,     
+        "latitude": 24.4434194,       
+        "longitude": 119.6982324,
+        "order": 2,         
+        "status": 0,        
+        "taskCode": "p201", 
+        "taskPhase": "1",
+        "path": [
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.6982324,
+              "timestep": 1,
+              "velocity": 60
+          },
+          {
+              "altitude": 200,
+              "latitude": 24.4434194,
+              "longitude": 119.7982324,
+              "timestep": 2,
+              "velocity": 60
+          }
+      ]
+    },
+      {
+          "agentId": 103015,
+          "beginTime": 2945,
+          "altitude": 200,
+          "expectedDuration": 300,
+          "expectedQuantity": 9,
+          "latitude": 24.78116,
+          "longitude": 120.90139,
+          "order": 1,
+          "status": 0,
+          "taskCode": "p3",
+          "taskPhase": "1",
+          "path": [
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.6982324,
+                "timestep": 1,
+                "velocity": 60
+            },
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.7982324,
+                "timestep": 2,
+                "velocity": 60
+            }
+        ]
+      },
+      {
+          "agentId": 103015,
+          "beginTime": 3245,
+          "altitude": 200,
+          "expectedDuration": 300,
+          "expectedQuantity": 9,
+          "latitude": 24.78116,
+          "longitude": 120.90139,
+          "order": 1,
+          "status": 0,
+          "taskCode": "p3",
+          "taskPhase": "1",
+          "path": [
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.6982324,
+                "timestep": 1,
+                "velocity": 60
+            },
+            {
+                "altitude": 200,
+                "latitude": 24.4434194,
+                "longitude": 119.7982324,
+                "timestep": 2,
+                "velocity": 60
+            }
+        ]
+      }
+  ],
+  "name": "ResearchGroup4",
+  "key": "TaskAllocationPlan",
+  "timestamp": 10
+}

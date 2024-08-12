@@ -17,10 +17,13 @@ add_message_files(
   FILES
   PusimEntityData.msg
   PusimKeyString.msg
+  PusimsKeyString.msg
   AgentData.msg
   AgentsData.msg
-  Targets.msg
   Target.msg
+  Targets.msg
+  Plan.msg
+  TimeSyn.msg
 )
 
 ## Generate services in the 'srv' folder

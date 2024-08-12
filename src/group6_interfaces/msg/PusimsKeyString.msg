@@ -1,0 +1,2 @@
+# PusimKeyStrings.msg
+PusimKeyString[] PusimsKeyString
