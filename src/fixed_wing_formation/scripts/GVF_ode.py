@@ -7,16 +7,14 @@ np.set_printoptions(threshold=np.inf)
 from scipy import integrate
 from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
-from pyquaternion import Quaternion
 import tf
 import math
 
 tra_frame = 0
 
-
 class GVF_ode:
     # 初始化输入无人机id，无人机数量，初始坐标
-    def __init__(self, plane_id, uav_num, init_uav_coordinates=None):
+    def __init__(self, plane_id, uav_num, x_coords, y_coords):
         self.id = int(plane_id)
 
         # TODO：uav_type和id号存在映射关系
@@ -32,8 +30,6 @@ class GVF_ode:
 
         self.global_paths = []
 
-        self.quaternion = tf.transformations.quaternion_from_euler(0, -math.pi / 2, math.pi / 2)
-        self.q = Quaternion([self.quaternion[3], self.quaternion[0], self.quaternion[1], self.quaternion[2]])
         self.multi_pose_pub = [None] * int(uav_num)
 
         # params
@@ -42,9 +38,9 @@ class GVF_ode:
         self.tmp = np.linspace(0, 2 * np.pi, int(uav_num) + 1)
 
         # these delta make a square
-        self.delta1 = np.array([[0, 100, 200, 300, 300, 300, 200]])
-        self.delta2 = np.array([[0, 0, 0, 0, 100, 200, 200]])
-        self.manual_v = np.array([[1, 1, 50, 0, 0]])
+        self.delta1 = np.array([x_coords])
+        self.delta2 = np.array([y_coords])
+        self.manual_v = np.array([[0, 0, 50, 1, 1]])
 
         # graph
         self.A = np.roll(np.eye(int(uav_num), int(uav_num)), 1, axis=1)
@@ -112,19 +108,14 @@ class GVF_ode:
 
     def cal_pfvf(self, pos_all, n, uav_num, manual_v):
         len_pos = len(pos_all)
-        # m_v1 = manual_v[0][0]
-        m_v1 = (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) / self.trajectory_list[
-            tra_frame + 1
-        ][3]
-        # m_v2 = manual_v[0][1]
-        m_v2 = (
-            -(self.trajectory_list[tra_frame + 1][0] - self.trajectory_list[tra_frame][0])
-            / self.trajectory_list[tra_frame + 1][3]
-        )
+        m_v1 = manual_v[0][0]
+        m_v2 = manual_v[0][1]
         # m_v3 = manual_v[0][2]
         m_v3 = self.trajectory_list[tra_frame + 1][2]
-        m_v4 = manual_v[0][3]
-        m_v5 = manual_v[0][4]
+        # m_v4 = manual_v[0][3]
+        m_v4 = (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) / self.trajectory_list[tra_frame + 1][3]
+        # m_v5 = manual_v[0][4]
+        m_v5 = (-(self.trajectory_list[tra_frame + 1][0] - self.trajectory_list[tra_frame][0]) / self.trajectory_list[tra_frame + 1][3])
 
         if uav_num != len_pos // (n + 2):
             print("Error! N is not correct!")
@@ -153,15 +144,13 @@ class GVF_ode:
             phi1 = self.alpha * (x1 - f1w)
             phi2 = self.alpha * (x2 - f2w)
             phi3 = self.alpha * (x3 - f3w)
-            v = np.array(
-                [
-                    self.k1 * (scaled_w1 - x1) - m_v5 - m_v2,
-                    m_v1 + m_v4 + self.k2 * (scaled_w2 - x2),
-                    m_v3 - self.k3 * x3,
-                    -m_v2 - m_v5 - self.k1 * (scaled_w1 - x1),
-                    m_v1 + m_v4 - self.k2 * (scaled_w2 - x2),
-                ]
-            )
+            sign = (-1) ** n
+            v = np.array([sign * m_v5 - self.k1 * phi1,
+                    sign * (- m_v4) - self.k2 * phi2,
+                    sign * (- m_v3) - self.k3 * phi3 ,
+                    sign * m_v5 + self.k1 * phi1,
+                    sign * - m_v4 + self.k2 * phi2])
+            
             pfvf_all[j : j + n + 2, 0] = v
             phi = np.array([phi1, phi2, phi3])
             e_all[0, l : l + n] = phi
