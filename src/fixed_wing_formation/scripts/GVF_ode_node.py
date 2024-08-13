@@ -1,13 +1,15 @@
 import rospy
-from group6_interfaces.msg import PusimKeyString, Target, Targets, AgentData, AgentsData
+from group6_interfaces.msg import Target, Targets, AgentData, AgentsData, TimeSyn
 from geometry_msgs.msg import PoseStamped
 from group6_interfaces.srv import DronePlans, DronePlansResponse, DronePlansRequest
 from GVF_ode import GVF_ode
 import numpy as np
+import threading
 
 # Global variable
 agent_id_map = {}  # 格式为{0：103015，1: 103019}
 task_start_time_mapping = {}
+
 
 class Targetpoint:
     def __init__(self, x, y, z, timestep, velocity):
@@ -91,82 +93,92 @@ class AgentPlan:
 
 class GVF_ode_node:
     def __init__(self):
-        self.uav_num = None
-        self.agent_id = 0
         self.agent_plans = []
         self.trajectory_list = []
         self.pub_set = []
-        self.gvf_ode_set = []
-        # self.subscriber = rospy.Subscriber("/AgentsData", AgentsData, self.callback)
-        server = rospy.Service("/AgentsData", DronePlans, self.callback)
-        while self.uav_num == None:
-            continue
-        x_coords, y_coords = self.generate_drone_positions(self.uav_num, 100, 100)
-        self.gvf_ode = GVF_ode(self.agent_plans[0].agentId, self.uav_num, x_coords, y_coords)
+        self.gvf_ode_set = {}
 
-        # 根据映射表驱动任务运行
-        global agent_id_map, task_start_time_mapping
-
-        
-        
-
-
-
-        # for agent_plan in self.agent_plans:
-        #     pub = rospy.Publisher(
-        #         self.gvf_ode.uav_type + "_" + str(agent_plan.agentId) + "/mavros/GVF_ode/pose",
-        #         PoseStamped,
-        #         queue_size=1,
-        #     )
-        for i in range(self.uav_num):
-            pub = rospy.Publisher(
-                self.gvf_ode.uav_type + "_" + str(i) + "/mavros/GVF_ode/pose",
-                PoseStamped,
-                queue_size=1,
-            )
-            self.pub_set.append(pub)
-        # for targetpoint in self.agent_plans[0].path.targets:
-        #     # TODO time不确定
-        #     self.trajectory_list.append([targetpoint.x, targetpoint.y/10, -targetpoint.z, 50])
-        #     print(self.trajectory_list)
-        self.trajectory_list = [[0, 0, 0, 0], [1000, 1000, 50, 50], [1000, 2000, 100, 100], [0, 3000, 50, 50]]
-        # print(self.trajectory_list)
-        self.gvf_ode.update_waypoint(self.trajectory_list)
-        self.gvf_ode.calculate_path()
-        global_paths = self.gvf_ode.global_paths
-        # 设置发布频率为10Hz
-        rate = rospy.Rate(4)
-
-        numpoints = 313
-        for i in range(len(self.agent_plans)):
-            p = global_paths[i]
-            for j in range(numpoints):
-                for k in range(self.uav_num):
-                    target = PoseStamped()
-                    target.pose.position.x = p[j, k * 5]
-                    target.pose.position.y = p[j, k * 5 + 1]
-                    target.pose.position.z = p[j, k * 5 + 2]
-                    self.pub_set[k].publish(target)
-                rospy.sleep(0.25)
+        self.uav_type = "plane"
+        self.ros_timestamp = 0
+        self.company_timestamp = 0
+        self.ros_timenow = rospy.Time.now().to_sec()
+        self.time_synchronization_sub = rospy.Subscriber("/TimeSyn", TimeSyn, self.time_synchronization_callback)
+        service = rospy.Service("/AgentsData", DronePlans, self.callback)
 
     def callback(self, agents_msg):
         print("接收到数据")
-        # self.uav_num = len(agents_msg.agents_data)
-        self.uav_num = 7
         for agent_msg in agents_msg.agents_data:
-            
             agent_plan = AgentPlan(agent_msg.agentId, agent_msg.plans)
             self.agent_plans.append(agent_plan)
         resp = DronePlansResponse()
         resp.success.data = True
+
+        # 初始化任务
+        id_map, task_map = self.get_mapping_table()
+        self.generate_pub_set(id_map)
+        self.generate_gvf_ode_set(task_map, self.agent_plans)
+
+        print("初始化完毕")
+        while self.company_timestamp == 0:
+            continue
+        print("开始执行任务")
+        self.start_perform_tasks(id_map, task_map, self.agent_plans)
+
         return resp
 
-    def generate_pub_set(self,agent_id_map):
-        pass
+    def time_synchronization_callback(self, time_syn_msg):
+        self.company_timestamp = time_syn_msg.company_timestamp
+        self.ros_timestamp = time_syn_msg.ros_timestamp
+        rospy.loginfo(f"company_timestamp: {self.company_timestamp}")
+        if self.company_timestamp != 0:
+            self.time_synchronization_sub.unregister()
 
-    def generate_gvf_ode_set(self,agent_plans):
-        pass
-    
+    def generate_pub_set(self, id_map):
+        for pub in self.pub_set:
+            pub.unregister()
+        self.pub_set = []
+        for key, value in id_map.items():
+            pub = rospy.Publisher(
+                self.uav_type + "_" + str(value) + "/mavros/GVF_ode/pose",
+                PoseStamped,
+                queue_size=1,
+            )
+            self.pub_set.append(pub)
+
+    def generate_gvf_ode_set(self, task_map, agent_plans):
+        self.gvf_ode_set = {}
+        for key, value in task_map.items():
+            trajectory_list = []
+            uav_num = len(value[1])
+            x_coords, y_coords = self.generate_drone_positions(uav_num, 100, 100)
+            gvf_ode = GVF_ode(value[1], uav_num, x_coords, y_coords)
+            first_id_of_task = value[1][0]
+            for plan in agent_plans[first_id_of_task].plans:
+                if plan.taskCode == key:
+                    for targetpoint in plan.targets:
+                        # TODO 时间戳信息不对   x,y,z坐标系需要修改
+                        trajectory_list.append([targetpoint.x, targetpoint.y, -targetpoint.z, 50])
+            gvf_ode.update_waypoint(trajectory_list)
+            gvf_ode.calculate_path()
+            self.gvf_ode_set[key] = gvf_ode
+
+    # 读取id映射表，并根据映射表进行分组
+    def get_mapping_table(self):
+        global agent_id_map, task_start_time_mapping
+        with open("../../communication/map/agent_id_map.txt", "r") as file:
+            for line in file:
+                line = line.strip()
+                if line:
+                    key, value = line.split(": ")
+                    agent_id_map[int(key)] = int(value)
+
+        with open("../../communication/map/task_start_time_map.txt", "r") as file:
+            lines = file.readlines()
+            for line in lines:
+                task_code = line.split("TaskCode: ")[1].split(",")[0].strip()
+                start_time = eval(line.split("StartTime: ")[1].strip())
+                task_start_time_mapping[task_code] = start_time
+        return agent_id_map, task_start_time_mapping
 
     def generate_drone_positions(self, num_drones, x_dis, y_dis):
         x_coords = []
@@ -185,27 +197,53 @@ class GVF_ode_node:
 
         return x_coords, y_coords
 
+    # 开始执行任务
+    def start_perform_tasks(self, id_map, task_map, agent_plans):
+        for key, value in task_map.items():
+            begin_time = value[0]
+            uav_ids = value[1]
+            task_code = key
+            for plan in agent_plans[uav_ids[0]].plans:
+                if plan.taskCode == task_code:
+                    task_begin_pose = PoseStamped()
+                    task_begin_pose.pose.position.x = plan.altitude
+                    task_begin_pose.pose.position.y = plan.latitude
+                    task_begin_pose.pose.position.z = plan.longitude
+            gvf_ode = self.gvf_ode_set[task_code]
+            for i in range(len(uav_ids)):
+                uav_pose = PoseStamped()
+                uav_pose.pose.position.x = task_begin_pose.pose.position.x + gvf_ode.x_coords[i]
+                uav_pose.pose.position.y = task_begin_pose.pose.position.y + gvf_ode.y_coords[i]
+                uav_pose.pose.position.z = task_begin_pose.pose.position.z
+                self.pub_set[uav_ids[i]].publish(uav_pose)
+                rospy.loginfo(
+                    f"当前任务初始点: {task_begin_pose.pose.position.x},{task_begin_pose.pose.position.y},{task_begin_pose.pose.position.z}"
+                )
+            rospy.loginfo(f"begin_time: {begin_time}")
+            while (self.ros_timenow - self.ros_timestamp) < (begin_time - self.company_timestamp):
+                rospy.sleep(0.5)
+                self.ros_timenow = rospy.Time.now().to_sec()
+            rospy.loginfo(
+                f"开始执行任务: {task_code}，当前仿真公司时间为：{self.company_timestamp + self.ros_timenow - self.ros_timestamp}"
+            )
+
+            self.publish_targets(gvf_ode, uav_ids)
+
+    def publish_targets(self, gvf_ode, uav_ids):
+        numpoints = 313
+        for i in range(len(gvf_ode.trajectory_list) - 1):
+            p = gvf_ode.global_paths[i]
+            for j in range(numpoints):
+                for k in range(len(uav_ids)):
+                    target = PoseStamped()
+                    target.pose.position.x = p[j, k * 5]
+                    target.pose.position.y = p[j, k * 5 + 1]
+                    target.pose.position.z = p[j, k * 5 + 2]
+                    self.pub_set[k].publish(target)
+                rospy.sleep(0.25)
+
 
 if __name__ == "__main__":
     rospy.init_node("GVF_ode_node", anonymous=True)
-    # 读取id映射表，并根据映射表进行分组
-    with open('../../communication/map/agent_id_map.txt', 'r') as file:
-        for line in file:
-            line = line.strip()
-            if line:
-                key, value = line.split(': ')
-                agent_id_map[int(key)] = int(value)
-            
-    with open('../../communication/map/task_start_time_map.txt', 'r') as file:
-        for line in file:
-            line = line.strip()
-            if line:
-                key_value_pairs = line.split(', ')
-                task_code = key_value_pairs[0].split(': ')[1]
-                start_time = key_value_pairs[1].split(': ')[1]
-                task_start_time_mapping[task_code] = float(start_time)
-
-    print(agent_id_map)
-    print(task_start_time_mapping)
     gvf_ode_node = GVF_ode_node()
     rospy.spin()

@@ -20,6 +20,7 @@ test_flag = True
 last_key = -1
 agent_id_map = {}
 task_start_time_mapping = {}
+first_receive_flag = True
 
 
 # Path_message
@@ -266,12 +267,23 @@ class JsonReassembler_srv:
         self.total_size = 0
         self.received_data = ""
 
+        self.time_syn_msg = TimeSyn()
+
         rospy.Subscriber("/ResearchGroup5Result", PusimKeyString, self.callback)
-        self.pub_time_synchronization = rospy.Publisher("/TimeSyn", TimeSyn, queue_size=1)
+        self.time_synchronization_pub = rospy.Publisher("/TimeSyn", TimeSyn, queue_size=1)
         self.agents_plan_client = rospy.ServiceProxy("/AgentsData", DronePlans)
         rospy.wait_for_service("/AgentsData")
-        if test_flag:
-            self.reassemble_data_then_client()
+        
+        # if test_flag:
+        #     print("开始发布")
+        #     self.reassemble_data_then_client()
+
+        print("开始发布时间戳")
+        rate = rospy.Rate(1)
+        while not rospy.is_shutdown():
+            self.time_synchronization_pub.publish(self.time_syn_msg)
+            print(self.time_syn_msg)
+            rate.sleep()
 
     def callback(self, data):
         # 处理接收到的消息
@@ -296,15 +308,12 @@ class JsonReassembler_srv:
                 received_json = json.loads(self.received_data)
                 rospy.loginfo("Reconstructed JSON data: %s", received_json)
                 # 将重组后的JSON数据保存到本地文件
-                with open("../json/ResearchGroup5Result.json", "w") as file:
+                with open("../json/ResearchGroup5ResultTest.json", "w") as file:
                     json.dump(received_json, file, indent=4)
-                rospy.loginfo("JSON data saved to ResearchGroup5Result.json")
+                rospy.loginfo("JSON data saved to ResearchGroup5ResultTest.json")
             except ValueError:
                 rospy.logerr("Failed to parse JSON data")
 
-            # TODO 数据解析
-            company_timestamp = received_json.get["timestamp"]
-            print(company_timestamp)
             agents_plan = self.parse_agent_plan_from_data(received_json)
             self.reassemble_data_then_client(agents_plan)
 
@@ -321,7 +330,7 @@ class JsonReassembler_srv:
         agents_plan = self.data_sort(agents_plan)
 
         # 生成映射表
-        self.data_map(agents_plan)
+        self.data_id_map(agents_plan)
         self.data_task_map(agents_plan)
 
         # 定义参考点的GPS坐标
@@ -337,7 +346,6 @@ class JsonReassembler_srv:
             agent_msg = AgentData()
             for plan in agent_plan.plans:
                 plan_msg = Plan()
-                targets_msg = Targets()
                 agent_msg.agentId = plan.agentId
                 plan_msg.beginTime = plan.beginTime
                 plan_msg.expectedDuration = plan.expectedDuration
@@ -363,7 +371,6 @@ class JsonReassembler_srv:
                     plan_msg.targets.append(target_msg)
                 agent_msg.plans.append(plan_msg)
             agents_msg.agents_data.append(agent_msg)
-        print(agents_msg)
         resp = self.agents_plan_client.call(agents_msg)
         rospy.loginfo(resp.success)
 
@@ -374,31 +381,37 @@ class JsonReassembler_srv:
             agents_plan[i].plans = sorted(agents_plan[i].plans, key=lambda x: x.beginTime)
         return agents_plan
 
-    def data_map(self, agents_plan):
+    def data_id_map(self, agents_plan):
         global last_key, agent_id_map
         for i in range(len(agents_plan)):
             agent_id = agents_plan[i].agentId
-            if agent_id not in agent_id_map.values():
+            if agent_id not in agent_id_map.keys():
                 last_key += 1
                 new_key = last_key
-                agent_id_map[new_key] = agent_id
+                agent_id_map[agent_id] = new_key
         # 生成txt文件
         with open("../map/agent_id_map.txt", "w") as file:
             for key, value in agent_id_map.items():
                 file.write(f"{key}: {value}\n")
 
     def data_task_map(self, agents_plan):
-        global task_start_time_mapping
+        global task_start_time_mapping, agent_id_map
+        task_ids_map = {}
         for agent_plan in agents_plan:
             for plan in agent_plan.plans:
                 # 检查是否该任务类型已经在映射表中
                 if plan.taskCode not in task_start_time_mapping:
                     # 如果不在，添加该任务类型和对应的最早开始时间
-                    task_start_time_mapping[plan.taskCode] = plan.beginTime
+                    task_start_time_mapping[plan.taskCode] = [plan.beginTime,[agent_id_map[agent_plan.agentId]]]
+                    task_ids_map[plan.taskCode] = [agent_plan.agentId]
                 else:
                     # 如果已存在，比较并更新为更早的开始时间（如果需要）
-                    if plan.beginTime < task_start_time_mapping[plan.taskCode]:
-                        task_start_time_mapping[plan.taskCode] = plan.beginTime
+                    if plan.beginTime < task_start_time_mapping[plan.taskCode][0]:
+                        value = task_start_time_mapping[plan.taskCode]
+                        task_start_time_mapping[plan.taskCode] = [plan.beginTime,value[1]]
+                    value = task_start_time_mapping[plan.taskCode]
+                    value[1].append(agent_id_map[agent_plan.agentId])
+                    task_start_time_mapping[plan.taskCode] = value
         # 将映射表写入txt文件
         with open("../map/task_start_time_map.txt", "w") as file:
             for task_code, start_time in task_start_time_mapping.items():
@@ -423,18 +436,28 @@ class JsonReassembler_srv:
         return agents_plan
 
     def parse_agent_plan_from_file(self, file_path):
+        global first_receive_flag
         """从指定JSON文件解析出AgentPlan实例列表"""
         with open(file_path, "r", encoding="utf-8") as file:  # 打开并读取JSON文件
             data = json.load(file)  # 加载JSON文件内容为Python对象
-            # TODO
-            company_timestamp = data['timestamp']
-            
+            if first_receive_flag:
+                ros_timestamp = rospy.Time.now().to_sec()
+                company_timestamp = float(data['timestamp'])
+                self.time_syn_msg.company_timestamp = company_timestamp
+                self.time_syn_msg.ros_timestamp = ros_timestamp
+                first_receive_flag = False
             agent_plans = self.parse_agent_plan(data)  # 解析数据
             file.close()
         return agent_plans
 
     def parse_agent_plan_from_data(self, data):
-        data = json.load(data)
+        global first_receive_flag
+        if first_receive_flag:
+                ros_timestamp = rospy.Time.now().to_sec()
+                company_timestamp = float(data['timestamp'])
+                self.time_syn_msg.company_timestamp = company_timestamp
+                self.time_syn_msg.ros_timestamp = ros_timestamp
+                first_receive_flag = False
         agent_plans = self.parse_agent_plan(data)  # 解析数据
         return agent_plans
 

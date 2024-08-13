@@ -13,9 +13,11 @@ import math
 tra_frame = 0
 
 class GVF_ode:
-    # 初始化输入无人机id，无人机数量，初始坐标
+    # 初始化输入无人机id列表，无人机数量，初始坐标
     def __init__(self, plane_id, uav_num, x_coords, y_coords):
-        self.id = int(plane_id)
+        self.id = plane_id
+        self.x_coords = x_coords
+        self.y_coords = y_coords
 
         # TODO：uav_type和id号存在映射关系
         self.uav_type = "plane"
@@ -40,7 +42,7 @@ class GVF_ode:
         # these delta make a square
         self.delta1 = np.array([x_coords])
         self.delta2 = np.array([y_coords])
-        self.manual_v = np.array([[0, 0, 50, 1, 1]])
+        self.manual_v = np.array([[0, 0, 0, 1, 1]])
 
         # graph
         self.A = np.roll(np.eye(int(uav_num), int(uav_num)), 1, axis=1)
@@ -110,8 +112,8 @@ class GVF_ode:
         len_pos = len(pos_all)
         m_v1 = manual_v[0][0]
         m_v2 = manual_v[0][1]
-        # m_v3 = manual_v[0][2]
-        m_v3 = self.trajectory_list[tra_frame + 1][2]
+        m_v3 = manual_v[0][2]
+        # m_v3 = self.trajectory_list[tra_frame + 1][2]
         # m_v4 = manual_v[0][3]
         m_v4 = (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) / self.trajectory_list[tra_frame + 1][3]
         # m_v5 = manual_v[0][4]
@@ -138,7 +140,7 @@ class GVF_ode:
             # only need to change this part
             f1w = scaled_w1
             f2w = scaled_w2
-            f3w = 0
+            f3w = self.trajectory_list[tra_frame + 1][2]
 
             # only need to change this part
             phi1 = self.alpha * (x1 - f1w)
@@ -147,7 +149,7 @@ class GVF_ode:
             sign = (-1) ** n
             v = np.array([sign * m_v5 - self.k1 * phi1,
                     sign * (- m_v4) - self.k2 * phi2,
-                    sign * (- m_v3) - self.k3 * phi3 ,
+                    - self.k3 * phi3 ,
                     sign * m_v5 + self.k1 * phi1,
                     sign * - m_v4 + self.k2 * phi2])
             
@@ -158,12 +160,10 @@ class GVF_ode:
         return pfvf_all, e_all
 
     def multipf(self, t, p, n, uav_num, A, L, delta1, delta2, manual_v):
-
         [pfvf, e_all] = self.cal_pfvf(p, n, int(uav_num), manual_v)
         copf = self.cal_covf(p, n, int(uav_num), A, L, delta1, delta2)
         vf = pfvf + self.kc * copf
         dxidt = vf
-
         return dxidt, e_all
 
     def calculate_path(self, timestep=None):
@@ -191,48 +191,6 @@ class GVF_ode:
 
             self.p_final = p[numpoints - 1 :]
             self.global_paths.append(p)
-
-
-#     def main(self, tra_frame):
-
-#         # rospy.init_node('GVF_ode' + str(self.id), anonymous=True)
-#         # rospy.init_node('GVF_ode' + str(self.id))
-#         # rate = rospy.Rate(4)
-
-#         # pub = rospy.Publisher(self.uav_type+'_'+str(self.id)+'/mavros/GVF_ode/pose' ,PoseStamped , queue_size=1)
-
-#         ### ode45
-#         t0, tf = 0, self.trajectory_list[tra_frame + 1][3]
-#         numpoints = 313
-#         self.drawnum = 1
-#         t = np.linspace(t0, tf, numpoints)
-#         p_init = self.p_init
-#         if tra_frame > 0:
-#             p_init = self.p_final.T
-#             p_init = p_init.squeeze()
-#         p = np.zeros((len(t), len(p_init)))
-#         p[0, :] = p_init
-#         r = integrate.ode(self.multipf).set_integrator("dopri5")
-#         r.set_initial_value(p_init, t0)
-#         r.set_f_params(self.n, int(self.uav_num), self.A, self.L, self.delta1, self.delta2, self.manual_v)
-#         for i in range(1, len(t)):
-#             p[i, :] = r.integrate(t[i])
-#             if not r.successful():
-#                 raise RuntimeError("Could not integrate")
-
-#         self.p_final = p[numpoints - 1 :]
-
-#         while not rospy.is_shutdown():
-#             for i in range(numpoints):
-#                 self.multi_local_pose[i].pose.position.x = p[i, self.id * 5]
-#                 self.multi_local_pose[i].pose.position.y = p[i, self.id * 5 + 1]
-#                 self.multi_local_pose[i].pose.position.z = p[i, self.id * 5 + 2]
-#                 pub.publish(self.multi_local_pose[i])
-#                 rate.sleep()
-
-#         tra_frame += 1
-
-#         return tra_frame
 
 
 # if __name__ == "__main__":
