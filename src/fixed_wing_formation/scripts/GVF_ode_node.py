@@ -110,6 +110,7 @@ class GVF_ode_node:
         for agent_msg in agents_msg.agents_data:
             agent_plan = AgentPlan(agent_msg.agentId, agent_msg.plans)
             self.agent_plans.append(agent_plan)
+            print(agent_msg)
         resp = DronePlansResponse()
         resp.success.data = True
 
@@ -157,7 +158,7 @@ class GVF_ode_node:
                 if plan.taskCode == key:
                     for targetpoint in plan.targets:
                         # TODO 时间戳信息不对   x,y,z坐标系需要修改
-                        trajectory_list.append([targetpoint.x, targetpoint.y, -targetpoint.z, 50])
+                        trajectory_list.append([targetpoint.x, targetpoint.y, targetpoint.z, 50])
             gvf_ode.update_waypoint(trajectory_list)
             gvf_ode.calculate_path()
             self.gvf_ode_set[key] = gvf_ode
@@ -206,27 +207,39 @@ class GVF_ode_node:
             for plan in agent_plans[uav_ids[0]].plans:
                 if plan.taskCode == task_code:
                     task_begin_pose = PoseStamped()
-                    task_begin_pose.pose.position.x = plan.altitude
-                    task_begin_pose.pose.position.y = plan.latitude
-                    task_begin_pose.pose.position.z = plan.longitude
+                    task_begin_pose.pose.position.x = plan.latitude
+                    task_begin_pose.pose.position.y = plan.longitude
+                    task_begin_pose.pose.position.z = plan.altitude
+                    break
+            if task_begin_pose is None:
+                rospy.logwarn(f"No valid plan found for task: {task_code}")
+                continue
+
             gvf_ode = self.gvf_ode_set[task_code]
-            for i in range(len(uav_ids)):
+            for i, uav_id in enumerate(uav_ids):
                 uav_pose = PoseStamped()
                 uav_pose.pose.position.x = task_begin_pose.pose.position.x + gvf_ode.x_coords[i]
                 uav_pose.pose.position.y = task_begin_pose.pose.position.y + gvf_ode.y_coords[i]
                 uav_pose.pose.position.z = task_begin_pose.pose.position.z
-                self.pub_set[uav_ids[i]].publish(uav_pose)
+                self.pub_set[uav_id].publish(uav_pose)
                 rospy.loginfo(
-                    f"当前任务初始点: {task_begin_pose.pose.position.x},{task_begin_pose.pose.position.y},{task_begin_pose.pose.position.z}"
+                    f"无人机{uav_id}的当前任务{task_code}的初始点: {uav_pose.pose.position.x},{uav_pose.pose.position.y},{uav_pose.pose.position.z}"
                 )
-            rospy.loginfo(f"begin_time: {begin_time}")
+            rospy.loginfo(f"任务: {task_code}的开始时间为: {begin_time}")
             while (self.ros_timenow - self.ros_timestamp) < (begin_time - self.company_timestamp):
                 rospy.sleep(0.5)
                 self.ros_timenow = rospy.Time.now().to_sec()
+            self.ros_timenow = rospy.Time.now().to_sec()
             rospy.loginfo(
                 f"开始执行任务: {task_code}，当前仿真公司时间为：{self.company_timestamp + self.ros_timenow - self.ros_timestamp}"
             )
 
+            # 启动线程发布目标
+            # TODO：同一时间可以存在多个线程，会存在任务冲突的情形
+            # publish_thread = threading.Thread(target=self.publish_targets, args=(gvf_ode, uav_ids))
+            # publish_thread.start()
+
+            # TODO：运行完毕后才会执行下一个任务
             self.publish_targets(gvf_ode, uav_ids)
 
     def publish_targets(self, gvf_ode, uav_ids):

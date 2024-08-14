@@ -109,7 +109,14 @@ if __name__ == "__main__":
     leader_cmd_pub = rospy.Publisher("/xtdrone/leader_cmd", String, queue_size=3)
 
     cmd = String()  # 这两步消息实例化是给通信脚本发的指令
+
+    # 初始盘旋点
     pose = Pose()
+    for i in range(plane_num):
+        multi_plane_pose[i].position.x = 0
+        multi_plane_pose[i].position.y = 0
+        multi_plane_pose[i].position.z = 200
+
 
     # pose = [Pose() for i in range(plane_num)]
 
@@ -119,6 +126,12 @@ if __name__ == "__main__":
     angular = 0.0
 
     print_msg()
+
+
+
+
+
+    
     while 1:
         key = getKey()
         if key == "w":
@@ -228,9 +241,9 @@ if __name__ == "__main__":
 
         # pose.position.x = forward; pose.position.y = leftward; pose.position.z = upward
 
-        pose.orientation.x = 0.0
-        pose.orientation.y = 0.0
-        pose.orientation.z = angular
+        # pose.orientation.x = 0.0
+        # pose.orientation.y = 0.0
+        # pose.orientation.z = angular
 
         for i in range(plane_num):
             if ctrl_leader:

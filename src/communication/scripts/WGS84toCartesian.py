@@ -48,11 +48,9 @@ class PositionConvert:
         cos_d_lon = math.cos(lon_rad - ref_lon_rad)
 
         arg = np.clip(ref_sin_lat * sin_lat + ref_cos_lat * cos_lat * cos_d_lon, -1.0, 1.0)
-        c = math.acos(arg)
+        c = math.acos(arg) if abs(arg) <= 1 else 0  # 防止超出范围
 
-        k = 1.0
-        if abs(c) > 0:
-            k = c / math.sin(c)
+        k = c / math.sin(c) if abs(c) > 0 else 1.0
 
         x = float(k * (ref_cos_lat * sin_lat - ref_sin_lat * cos_lat * cos_d_lon) * self.CONSTANTS_RADIUS_OF_EARTH)
         y = float(k * cos_lat * math.sin(lon_rad - ref_lon_rad) * self.CONSTANTS_RADIUS_OF_EARTH)
@@ -60,7 +58,7 @@ class PositionConvert:
 
         return x, y, z
 
-    def XYtoWGS84(self, x, y, ref_lat, ref_lon):
+    def XYZtoWGS84(self, x, y, z, ref_lat, ref_lon):
         """
         将XYZ坐标转换为GPS坐标。
 
@@ -96,9 +94,22 @@ class PositionConvert:
         else:
             lat = math.degrees(ref_lat)
             lon = math.degrees(ref_lon)
+        alt = z
 
-        return lat, lon
+        return lat, lon, alt
 
+    def NEDtoWGS84(self, n, e, d):
+        x = n
+        y = e
+        z = -d
+        return self.XYZtoWGS84(x, y, z)
+
+    def ENUtoWGS84(self, e, n, u):
+        x = n
+        y = e
+        z = u
+        return self.XYZtoWGS84(x, y, z)
+    
     def WGS84toENU(self, lat, lon, alt):
         """
         将WGS84坐标转换为ENU（East-North-Up）坐标系。
@@ -111,7 +122,7 @@ class PositionConvert:
         返回:
         tuple: (e, n, u) 坐标，单位：米
         """
-        x, y, z = self.wgs84_to_xyz(lat, lon, alt)
+        x, y, z = self.WGS84toXYZ(lat, lon, alt)
         e = y
         n = x
         u = z

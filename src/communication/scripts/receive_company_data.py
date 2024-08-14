@@ -16,7 +16,7 @@ from WGS84toCartesian import PositionConvert
 
 
 # global variable
-test_flag = True
+test_flag = False
 last_key = -1
 agent_id_map = {}
 task_start_time_mapping = {}
@@ -273,10 +273,6 @@ class JsonReassembler_srv:
         self.time_synchronization_pub = rospy.Publisher("/TimeSyn", TimeSyn, queue_size=1)
         self.agents_plan_client = rospy.ServiceProxy("/AgentsData", DronePlans)
         rospy.wait_for_service("/AgentsData")
-        
-        # if test_flag:
-        #     print("开始发布")
-        #     self.reassemble_data_then_client()
 
         print("开始发布时间戳")
         rate = rospy.Rate(1)
@@ -337,7 +333,7 @@ class JsonReassembler_srv:
         original_point = agents_plan[0].plans[0].path[0]
         lat_ref = original_point.latitude  # 参考点纬度
         lon_ref = original_point.longitude  # 参考点经度
-        alt_ref = original_point.altitude  # 参考点高度（海拔）
+        alt_ref = 0  # 参考点高度（海拔）
         # TODO 暂时无原点，使用第一架无人机的第一个航点的经纬度作为原点
         PC = PositionConvert(lat_ref, lon_ref, alt_ref)
         # 发布消息
@@ -354,7 +350,7 @@ class JsonReassembler_srv:
                 plan_msg.status = plan.status
                 plan_msg.taskCode = plan.taskCode
                 plan_msg.taskPhase = plan.taskPhase
-                plan_msg.latitude, plan_msg.longitude, plan_msg.altitude = PC.WGS84toNED(
+                plan_msg.latitude, plan_msg.longitude, plan_msg.altitude = PC.WGS84toENU(
                     plan.latitude, plan.longitude, plan.altitude
                 )
                 plan_msg.taskCode = plan.taskCode
@@ -364,7 +360,7 @@ class JsonReassembler_srv:
                     lat = target_point.latitude  # 目标点纬度
                     lon = target_point.longitude  # 目标点经度
                     alt = target_point.altitude  # 目标点高度（海拔）
-                    target_msg.x, target_msg.y, target_msg.z = PC.WGS84toNED(lat, lon, alt)
+                    target_msg.x, target_msg.y, target_msg.z = PC.WGS84toENU(lat, lon, alt)
                     # print(f"GPS_TO_XYZ: {target_msg.x}, {target_msg.y}, {target_msg.z}")
                     target_msg.timestep = target_point.timestep
                     target_msg.velocity = target_point.velocity
