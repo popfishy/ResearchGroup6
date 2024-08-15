@@ -394,17 +394,18 @@ class JsonReassembler_srv:
         global task_start_time_mapping, agent_id_map
         task_ids_map = {}
         for agent_plan in agents_plan:
+            print(len(agent_plan.plans), agent_plan.agentId)
+
             for plan in agent_plan.plans:
                 # 检查是否该任务类型已经在映射表中
                 if plan.taskCode not in task_start_time_mapping:
                     # 如果不在，添加该任务类型和对应的最早开始时间
-                    task_start_time_mapping[plan.taskCode] = [plan.beginTime,[agent_id_map[agent_plan.agentId]]]
-                    task_ids_map[plan.taskCode] = [agent_plan.agentId]
+                    task_start_time_mapping[plan.taskCode] = [plan.beginTime, [agent_id_map[agent_plan.agentId]]]
                 else:
                     # 如果已存在，比较并更新为更早的开始时间（如果需要）
                     if plan.beginTime < task_start_time_mapping[plan.taskCode][0]:
                         value = task_start_time_mapping[plan.taskCode]
-                        task_start_time_mapping[plan.taskCode] = [plan.beginTime,value[1]]
+                        task_start_time_mapping[plan.taskCode] = [plan.beginTime, value[1]]
                     value = task_start_time_mapping[plan.taskCode]
                     value[1].append(agent_id_map[agent_plan.agentId])
                     task_start_time_mapping[plan.taskCode] = value
@@ -418,7 +419,7 @@ class JsonReassembler_srv:
         """Parse JSON data into AgentPlan instances."""
         agents_plan = []
         plans = Task.all_from_json(data)
-
+        # 不存在无人机编号为-1
         last_id = plans[0].agentId
         last_index = 0
         for i in range(len(plans)):
@@ -427,8 +428,11 @@ class JsonReassembler_srv:
                 agents_plan.append(AgentPlan(last_id, plans[last_index:i]))
                 last_id = now_id
                 last_index = i
-            if i == (len(plans) - 1):
+            if (now_id != last_id) & (i == (len(plans) - 1)):
                 agents_plan.append(AgentPlan(last_id, plans[last_index:i]))
+                agents_plan.append(AgentPlan(now_id, plans[i:]))
+            if (now_id == last_id) & (i == (len(plans) - 1)):
+                agents_plan.append(AgentPlan(last_id, plans[i:]))
         return agents_plan
 
     def parse_agent_plan_from_file(self, file_path):
@@ -438,7 +442,7 @@ class JsonReassembler_srv:
             data = json.load(file)  # 加载JSON文件内容为Python对象
             if first_receive_flag:
                 ros_timestamp = rospy.Time.now().to_sec()
-                company_timestamp = float(data['timestamp'])
+                company_timestamp = float(data["timestamp"])
                 self.time_syn_msg.company_timestamp = company_timestamp
                 self.time_syn_msg.ros_timestamp = ros_timestamp
                 first_receive_flag = False
@@ -449,11 +453,11 @@ class JsonReassembler_srv:
     def parse_agent_plan_from_data(self, data):
         global first_receive_flag
         if first_receive_flag:
-                ros_timestamp = rospy.Time.now().to_sec()
-                company_timestamp = float(data['timestamp'])
-                self.time_syn_msg.company_timestamp = company_timestamp
-                self.time_syn_msg.ros_timestamp = ros_timestamp
-                first_receive_flag = False
+            ros_timestamp = rospy.Time.now().to_sec()
+            company_timestamp = float(data["timestamp"])
+            self.time_syn_msg.company_timestamp = company_timestamp
+            self.time_syn_msg.ros_timestamp = ros_timestamp
+            first_receive_flag = False
         agent_plans = self.parse_agent_plan(data)  # 解析数据
         return agent_plans
 

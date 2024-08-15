@@ -22,8 +22,6 @@ uav_num = None
 
 flag = True
 
-
-
 def gazebo_data_callback(msg):
     global uav_num, flag, multi_path
 
@@ -51,7 +49,7 @@ def gazebo_data_callback(msg):
         multi_local_pose[vehicle_id].pose.orientation.z = euler[2]
 
         # 将xyz转化为经纬高
-        PC = PositionConvert(0, 0, 0)
+        PC = PositionConvert(24.825729299082955, 120.80700000000002, 0)
         x = multi_local_pose[vehicle_id].pose.position.x
         y = multi_local_pose[vehicle_id].pose.position.y
         z = multi_local_pose[vehicle_id].pose.position.z
