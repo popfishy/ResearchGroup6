@@ -85,7 +85,6 @@ def print_msg():  # 打印函数
 
 
 def pose_callback(data, i):
-
     multi_plane_pose[i].position.x = data.pose.position.x
     multi_plane_pose[i].position.y = data.pose.position.y
     multi_plane_pose[i].position.z = data.pose.position.z
@@ -126,11 +125,6 @@ if __name__ == "__main__":
     angular = 0.0
 
     print_msg()
-
-
-
-
-
     
     while 1:
         key = getKey()

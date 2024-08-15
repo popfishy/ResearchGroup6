@@ -2,7 +2,7 @@ import rospy
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 import sys
 from gazebo_msgs.msg import ModelStates
-from group6_interfaces.msg import PusimKeyString, PusimsKeyString
+from pusim_msgs.msg import PusimKeyString, PusimsKeyString
 from WGS84toCartesian import PositionConvert
 import tf
 import json
@@ -129,9 +129,9 @@ def jsonTosting(filename):
         pusim_key_string.size = total_chunks
         pusim_key_string.data = chunks[i]
         # json_strings_data.PusimKeyStrings.append(json_strings_data[i])
-        pusim_key_strings_msg.PusimsKeyString.append(pusim_key_string)
+        json_string_data[i] = pusim_key_string
 
-    return pusim_key_strings_msg
+    return json_string_data
 
     # 计算总共有多少段
     # total_chunks = len(chunks)
@@ -149,13 +149,13 @@ def jsonTosting(filename):
 
 if __name__ == '__main__':
     rospy.init_node(vehicle_type+'_get_pose_truth')
-    # timer = rospy.Timer(rospy.Duration(1), doMsg)
     gazebo_model_state_sub = rospy.Subscriber("/gazebo/model_states", ModelStates, gazebo_data_callback, queue_size=1)
-    pub = rospy.Publisher("/Group6Data", PusimsKeyString, queue_size=1)
+    pub = rospy.Publisher("/ResearchGroup6Result", PusimKeyString, queue_size=1)
 
     rate = rospy.Rate(1)
     while not rospy.is_shutdown():
-        print(jsonTosting('ResearchGroup6Result.json'))
-        pub.publish(jsonTosting('ResearchGroup6Result.json'))
+        json_string_data = jsonTosting('ResearchGroup6Result.json')
+        for data in json_string_data:
+            pub.publish(data)
         rate.sleep()  # 等待直到下一次迭代
     rospy.spin()

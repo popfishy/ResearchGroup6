@@ -1,0 +1,11 @@
+float64 time
+uint32 agentId
+uint32 upEntityID
+uint32 camp
+uint32 entityType
+uint32 dataLevel
+uint32 dataType
+float64[3] posLLA
+float64[3] velocity
+float64[3] attitude
+float64[4] attitude4E

@@ -58,7 +58,7 @@ class PositionConvert:
 
         return x, y, z
 
-    def XYZtoWGS84(self, x, y, z, ref_lat, ref_lon):
+    def XYZtoWGS84(self, x, y, z):
         """
         将XYZ坐标转换为GPS坐标。
 
@@ -75,8 +75,8 @@ class PositionConvert:
         y_rad = float(y) / self.CONSTANTS_RADIUS_OF_EARTH
         c = math.sqrt(x_rad * x_rad + y_rad * y_rad)
 
-        ref_lat_rad = math.radians(ref_lat)
-        ref_lon_rad = math.radians(ref_lon)
+        ref_lat_rad = math.radians(self.ref_lat)
+        ref_lon_rad = math.radians(self.ref_lon)
 
         ref_sin_lat = math.sin(ref_lat_rad)
         ref_cos_lat = math.cos(ref_lat_rad)
