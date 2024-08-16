@@ -269,7 +269,7 @@ class JsonReassembler_srv:
 
         self.time_syn_msg = TimeSyn()
 
-        rospy.Subscriber("/ResearchGroup5Result", PusimKeyString, self.callback)
+        rospy.Subscriber("/ResearchGroup5ResultTest", PusimKeyString, self.callback)
         self.time_synchronization_pub = rospy.Publisher("/TimeSyn", TimeSyn, queue_size=1)
         self.agents_plan_client = rospy.ServiceProxy("/AgentsData", DronePlans)
         rospy.wait_for_service("/AgentsData")
@@ -283,6 +283,7 @@ class JsonReassembler_srv:
 
     def callback(self, data):
         # 处理接收到的消息
+        print("收到消息")
         index = data.index
         size = data.size
         key = data.key

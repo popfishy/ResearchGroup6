@@ -1,5 +1,5 @@
 import rospy
-from group6_interfaces.msg import Target, Targets, AgentData, AgentsData, TimeSyn
+from group6_interfaces.msg import TimeSyn
 from geometry_msgs.msg import PoseStamped
 from group6_interfaces.srv import DronePlans, DronePlansResponse, DronePlansRequest
 from GVF_ode import GVF_ode
@@ -236,11 +236,11 @@ class GVF_ode_node:
 
             # 启动线程发布目标
             # TODO：同一时间可以存在多个线程，会存在任务冲突的情形
-            # publish_thread = threading.Thread(target=self.publish_targets, args=(gvf_ode, uav_ids))
-            # publish_thread.start()
+            publish_thread = threading.Thread(target=self.publish_targets, args=(gvf_ode, uav_ids))
+            publish_thread.start()
 
             # TODO：运行完毕后才会执行下一个任务
-            self.publish_targets(gvf_ode, uav_ids)
+            # self.publish_targets(gvf_ode, uav_ids)
 
     def publish_targets(self, gvf_ode, uav_ids):
         numpoints = 313
@@ -253,7 +253,7 @@ class GVF_ode_node:
                     target.pose.position.y = p[j, k * 5 + 1]
                     target.pose.position.z = p[j, k * 5 + 2]
                     self.pub_set[k].publish(target)
-                rospy.sleep(0.25)
+                rospy.sleep(0.20)
 
 
 if __name__ == "__main__":

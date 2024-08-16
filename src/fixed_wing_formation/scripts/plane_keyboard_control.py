@@ -4,7 +4,6 @@ import sys, select, os  # 读键盘
 import tty, termios
 from std_msgs.msg import String
 
-multi_plane_pose = [None] * int(sys.argv[1])
 multi_plane_pose = [Pose() for i in range(int(sys.argv[1]))]
 
 LIN_STEP_SIZE = 1  # 键盘每按一下的setpoint增长量

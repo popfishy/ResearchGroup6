@@ -92,8 +92,8 @@ class PositionConvert:
             lon = math.degrees(lon_rad)
 
         else:
-            lat = math.degrees(ref_lat)
-            lon = math.degrees(ref_lon)
+            lat = math.degrees(self.ref_lat)
+            lon = math.degrees(self.ref_lon)
         alt = z
 
         return lat, lon, alt
@@ -170,35 +170,3 @@ class PositionConvert:
         z_cbf = z
 
         return x_cbf, y_cbf, z_cbf
-
-
-# if __name__ == "__main__":
-#     PC = PositionConvert()
-#     test = 2
-#     ref_lat = 23.356616973876953
-#     ref_lon = 119.5190505981445313
-#     if test == 1:
-#         x = 0.5
-#         y = 1
-#         lat_new, lon_new = PC.XYtoGPS(x, y, ref_lat, ref_lon)
-#         x_new, y_new = PC.GPStoXYZ(lat_new, lon_new, 200, ref_lat, ref_lon, 0)
-#         print(x_new, y_new)
-#     elif test == 2:
-#         lat = 24.356616973876953
-#         lon = 119.5190505981445313
-#         x, y, z = PC.GPStoXYZ(lat, lon, 200, ref_lat, ref_lon, 0)
-#         print(x, y, z)
-#         # lat_new, lon_new = PC.XYtoGPS(x, y, ref_lat, ref_lon)
-#         # print(lat_new, lon_new)
-#     elif test == 3:
-#         x = 10000.0
-#         y = 0.0
-#         lat_new, lon_new = PC.XYtoGPS(x, y, ref_lat, ref_lon)
-#         print(ref_lat, ref_lon)
-#         print(lat_new, lon_new)
-#     elif test == 4:
-#         x = 0.0
-#         y = 10000.0
-#         lat_new, lon_new = PC.XYtoGPS(x, y, ref_lat, ref_lon)
-#         print(ref_lat, ref_lon)
-#         print(lat_new, lon_new)

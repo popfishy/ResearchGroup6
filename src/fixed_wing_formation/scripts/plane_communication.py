@@ -41,9 +41,9 @@ class Communication:
         ''' 
         ros publishers
         '''
-        # self.target_motion_pub = rospy.Publisher(self.vehicle_type+'_'+self.vehicle_id+"/mavros/setpoint_raw/local", PositionTarget, queue_size=1)
-        # add
-        self.motion_pub = rospy.Publisher(self.vehicle_type+'_'+self.vehicle_id+"/mavros/setpoint_velocity/cmd_vel",TwistStamped,queue_size=1)
+        self.target_motion_pub = rospy.Publisher(self.vehicle_type+'_'+self.vehicle_id+"/mavros/setpoint_raw/local", PositionTarget, queue_size=1)
+        # add   /setpoint_attitude/cmd_vel    /setpoint_velocity/cmd_vel
+        # self.motion_pub = rospy.Publisher(self.vehicle_type+'_'+self.vehicle_id+"/mavros/setpoint_velocity/cmd_vel",TwistStamped,queue_size=1)
 
         '''
         ros services
@@ -69,33 +69,28 @@ class Communication:
             # target_position.position.y = 1000
             # target_position.position.z = 50
 
-            # self.target_motion = self.construct_target(x=target_position.position.x,y=target_position.position.y,z=target_position.position.z)
             # self.coordinate_frame = 1
             
             # self.target_motion.type_mask = (
             #                      PositionTarget.IGNORE_PX  |
             #                      PositionTarget.IGNORE_PY  |
             #                      PositionTarget.IGNORE_PZ  |
+            #                      PositionTarget.IGNORE_VX  |
+            #                      PositionTarget.IGNORE_VY  |
+            #                      PositionTarget.IGNORE_VZ  |
             #                      PositionTarget.IGNORE_AFX |
             #                      PositionTarget.IGNORE_AFY |
             #                      PositionTarget.IGNORE_AFZ |
             #                      PositionTarget.FORCE |
             #                      PositionTarget.IGNORE_YAW |
             #                      PositionTarget.IGNORE_YAW_RATE)
-            # print(self.target_motion.type_mask)
-            # velocity = 20
-            # # self.target_motion.velocity.x = velocity*(target_position.position.x - self.now_position.position.x)/math.sqrt((target_position.position.x - self.now_position.position.x)**2 + (target_position.position.y - self.now_position.position.y)**2 )
-            # # self.target_motion.velocity.y = velocity*(target_position.position.y - self.now_position.position.y)/math.sqrt((target_position.position.x - self.now_position.position.x)**2 + (target_position.position.y - self.now_position.position.y)**2 )
-            # self.target_motion.velocity.x = -10
-            # self.target_motion.velocity.y = -10
-            # self.target_motion.velocity.z = 0.0
-            # self.target_motion_pub.publish(self.target_motion)
+            self.target_motion_pub.publish(self.target_motion)
 
-            twist = TwistStamped()
-            twist.twist.linear.x = -5
-            twist.twist.linear.y = -15
-            twist.twist.linear.z = 0
-            self.motion_pub.publish(twist)
+            # twist = TwistStamped()
+            # twist.twist.linear.x = -5
+            # twist.twist.linear.y = -15
+            # twist.twist.linear.z = 0
+            # self.motion_pub.publish(twist)
             try:
                 rate.sleep()
             except:
