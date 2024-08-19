@@ -3,6 +3,7 @@ from group6_interfaces.msg import TimeSyn
 from geometry_msgs.msg import PoseStamped
 from group6_interfaces.srv import DronePlans, DronePlansResponse, DronePlansRequest
 from GVF_ode import GVF_ode
+from QGC_param_set import QGCParamSetter
 import numpy as np
 import threading
 
@@ -26,63 +27,28 @@ class Task:
         agentId,
         beginTime,
         expectedDuration,
-        expectedQuantity,
-        order,
-        status,
         taskCode,
-        taskPhase,
         latitude,
         longitude,
         altitude,
+        expectedQuantity = None,
+        order= None,
+        status= None,
+        taskPhase= None,
         path=None,
     ):
         self.agentId = agentId
         self.beginTime = beginTime
         self.expectedDuration = expectedDuration
-        self.expectedQuantity = expectedQuantity
+        self.taskCode = taskCode
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
         self.order = order
         self.status = status
-        self.taskCode = taskCode
         self.taskPhase = taskPhase
-        self.x = latitude
-        self.y = longitude
-        self.z = altitude
+        self.expectedQuantity = expectedQuantity
         self.path = path if path is not None else []
-
-    @classmethod
-    def from_dict(cls, plan_entry):
-        """Helper to create an AgentPlan instance from a single plan dictionary."""
-        targetpoints = [cls._parse_waypoint(wp) for wp in plan_entry["path"]]
-        return cls(
-            plan_entry["agentId"],
-            plan_entry["beginTime"],
-            plan_entry["expectedDuration"],
-            plan_entry["expectedQuantity"],
-            plan_entry["order"],
-            plan_entry["status"],
-            plan_entry["taskCode"],
-            plan_entry["taskPhase"],
-            plan_entry["latitude"],
-            plan_entry["longitude"],
-            plan_entry["altitude"],
-            targetpoints,
-        )
-
-    @staticmethod
-    def _parse_waypoint(wp_data):
-        """Helper static method to create a Waypoint instance from dict data."""
-        return Targetpoint(**wp_data)
-
-    @classmethod
-    def all_from_json(cls, json_data):
-        """Parses JSON data and returns a list of AgentPlan instances."""
-        planned_results = json_data.get("Planned_result", [])
-        return [cls.from_dict(plan_entry) for plan_entry in planned_results]
-
-    @classmethod
-    def to_drone_plan_list(cls, agent_plans):
-        """Converts list of AgentPlan instances to DronePlan list."""
-        return [{"id": plan.agentId, "longitude": wp.longitude} for plan in agent_plans for wp in plan.path]
 
 
 class AgentPlan:
@@ -97,6 +63,7 @@ class GVF_ode_node:
         self.trajectory_list = []
         self.pub_set = []
         self.gvf_ode_set = {}
+        self.qgc_param_setter = None
 
         self.uav_type = "plane"
         self.ros_timestamp = 0
@@ -110,16 +77,24 @@ class GVF_ode_node:
         for agent_msg in agents_msg.agents_data:
             agent_plan = AgentPlan(agent_msg.agentId, agent_msg.plans)
             self.agent_plans.append(agent_plan)
-            print(agent_msg)
+            print(agent_msg.plans)
         resp = DronePlansResponse()
         resp.success.data = True
 
         # 初始化任务
         id_map, task_map = self.get_mapping_table()
-        self.generate_pub_set(id_map)
-        self.generate_gvf_ode_set(task_map, self.agent_plans)
+        # 初始化QGC参数
+        self.init_qgc_params(self.uav_type, len(id_map))
 
-        print("初始化完毕")
+        # 生成无人机位置发布器
+        self.generate_pub_set(id_map)
+
+        # 生成GVF_ode序列，计算轨迹
+        start_time = rospy.Time.now().to_sec()
+        self.generate_gvf_ode_set(task_map, self.agent_plans)
+        end_time = rospy.Time.now().to_sec()
+        print(f"路径生成时间为：{end_time - start_time}，初始化完毕。")
+
         while self.company_timestamp == 0:
             continue
         print("开始执行任务")
@@ -133,6 +108,13 @@ class GVF_ode_node:
         rospy.loginfo(f"company_timestamp: {self.company_timestamp}")
         if self.company_timestamp != 0:
             self.time_synchronization_sub.unregister()
+
+    def init_qgc_params(self, uav_type, vehicle_num):
+        self.qgc_param_setter = QGCParamSetter(uav_type, vehicle_num)
+        self.qgc_param_setter.set_float_param("FW_AIRSPD_MAX", 80.0)
+        self.qgc_param_setter.set_float_param("FW_AIRSPD_TRIM", 60.0)
+        self.qgc_param_setter.set_float_param("FW_THR_MAX", 100.0)
+        self.qgc_param_setter.set_float_param("FW_THR_CRUISE", 80.0)
 
     def generate_pub_set(self, id_map):
         for pub in self.pub_set:
@@ -155,9 +137,14 @@ class GVF_ode_node:
             gvf_ode = GVF_ode(value[1], uav_num, x_coords, y_coords)
             first_id_of_task = value[1][0]
             for plan in agent_plans[first_id_of_task].plans:
+                last_timestamp = plan.beginTime
                 if plan.taskCode == key:
                     for targetpoint in plan.targets:
-                        trajectory_list.append([targetpoint.x, targetpoint.y, targetpoint.z, targetpoint.timestep])
+                        now_timestamp = targetpoint.timestep
+                        # TODO 因为课题五的错误数据
+                        time_expectation = (now_timestamp - last_timestamp) if now_timestamp > last_timestamp else 10
+                        trajectory_list.append([targetpoint.x, targetpoint.y, targetpoint.z, time_expectation])
+                        last_timestamp = now_timestamp
             gvf_ode.update_waypoint(trajectory_list)
             gvf_ode.calculate_path()
             self.gvf_ode_set[key] = gvf_ode
@@ -242,17 +229,19 @@ class GVF_ode_node:
             # self.publish_targets(gvf_ode, uav_ids)
 
     def publish_targets(self, gvf_ode, uav_ids):
-        numpoints = 313
+        print(uav_ids)
         for i in range(len(gvf_ode.trajectory_list) - 1):
             p = gvf_ode.global_paths[i]
+            # TODO：发布的目标点的数量
+            numpoints = p.shape[0]
             for j in range(numpoints):
                 for k in range(len(uav_ids)):
                     target = PoseStamped()
                     target.pose.position.x = p[j, k * 5]
                     target.pose.position.y = p[j, k * 5 + 1]
                     target.pose.position.z = p[j, k * 5 + 2]
-                    self.pub_set[k].publish(target)
-                rospy.sleep(0.1)
+                    self.pub_set[uav_ids[k]].publish(target)
+                rospy.sleep(0.4)
 
 
 if __name__ == "__main__":

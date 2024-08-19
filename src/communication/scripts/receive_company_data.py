@@ -37,26 +37,20 @@ class Task:
     def __init__(
         self,
         agentId,
+        taskCode,
         beginTime,
         expectedDuration,
-        taskCode,
+        velocity,
         latitude,
         longitude,
         altitude,
-        expectedQuantity = None,
-        order= None,
-        status= None,
-        taskPhase= None,
         path=None,
     ):
         self.agentId = agentId
         self.beginTime = beginTime
         self.expectedDuration = expectedDuration
-        self.expectedQuantity = expectedQuantity
-        self.order = order
-        self.status = status
         self.taskCode = taskCode
-        self.taskPhase = taskPhase
+        self.velocity = velocity
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
@@ -66,25 +60,12 @@ class Task:
     def from_dict(cls, plan_entry):
         """Helper to create an AgentPlan instance from a single plan dictionary."""
         targetpoints = [cls._parse_waypoint(wp) for wp in plan_entry["path"]]
-        # cls(
-        #     plan_entry["agentId"],
-        #     plan_entry["beginTime"],
-        #     plan_entry["expectedDuration"],
-        #     plan_entry["expectedQuantity"],
-        #     plan_entry["order"],
-        #     plan_entry["status"],
-        #     plan_entry["taskCode"],
-        #     plan_entry["taskPhase"],
-        #     plan_entry["latitude"],
-        #     plan_entry["longitude"],
-        #     plan_entry["altitude"],
-        #     targetpoints,
-        # )
         return cls(
             plan_entry["agentId"],
+            plan_entry["taskCode"],
             plan_entry["beginTime"],
             plan_entry["expectedDuration"],
-            plan_entry["taskCode"],
+            plan_entry["velocity"],
             plan_entry["latitude"],
             plan_entry["longitude"],
             plan_entry["altitude"],
@@ -311,7 +292,6 @@ class JsonReassembler_srv:
                 self.received_data = "".join(sorted_segments)
                 # 尝试解析重组后的JSON数据
                 received_json = json.loads(self.received_data)
-                rospy.loginfo("Reconstructed JSON data: %s", received_json)
                 # 将重组后的JSON数据保存到本地文件
                 with open("../json/ResearchGroup5ResultTest.json", "w") as file:
                     json.dump(received_json, file, indent=4)
@@ -339,11 +319,8 @@ class JsonReassembler_srv:
         self.data_task_map(agents_plan)
 
         # 定义参考点的GPS坐标
-        # original_point = agents_plan[0].plans[0].path[0]
-        # lat_ref = agents_plan[0].plans[0].latitude  # 参考点纬度
-        # lon_ref = agents_plan[0].plans[0].longitude  # 参考点经度
-        lat_ref = 24.825729278675468
-        lon_ref = 120.8090772269676
+        lat_ref = agents_plan[0].plans[0].latitude  # 参考点纬度
+        lon_ref = agents_plan[0].plans[0].longitude  # 参考点经度
         alt_ref = 0  # 参考点高度（海拔）
         # TODO 暂时无原点，使用第一架无人机的第一个航点的经纬度作为原点
         PC = PositionConvert(lat_ref, lon_ref, alt_ref)
@@ -356,11 +333,11 @@ class JsonReassembler_srv:
                 agent_msg.agentId = plan.agentId
                 plan_msg.beginTime = plan.beginTime
                 plan_msg.expectedDuration = plan.expectedDuration
-                # plan_msg.expectedQuantity = plan.expectedQuantity
-                # plan_msg.order = plan.order
-                # plan_msg.status = plan.status
-                plan_msg.taskPhase = plan.taskPhase
-                plan_msg.taskCode = plan.taskCode
+                # TODO
+                plan_msg.expectedQuantity = 0
+                plan_msg.order = 0
+                plan_msg.status = 0
+                plan_msg.taskPhase = ""
                 plan_msg.latitude, plan_msg.longitude, plan_msg.altitude = PC.WGS84toENU(
                     plan.latitude, plan.longitude, plan.altitude
                 )
@@ -377,9 +354,13 @@ class JsonReassembler_srv:
                     target_msg.velocity = target_point.velocity
                     plan_msg.targets.append(target_msg)
                 agent_msg.plans.append(plan_msg)
+                
             agents_msg.agents_data.append(agent_msg)
         resp = self.agents_plan_client.call(agents_msg)
-        rospy.loginfo(resp.success)
+        if resp.success:
+            rospy.loginfo(f"成功完成数据解析")
+        else:
+            rospy.logerr(f"数据解析失败")
 
     # 按照agent的id排序，再对agent下的任务开始时间排序
     def data_sort(self, agents_plan):
@@ -400,13 +381,12 @@ class JsonReassembler_srv:
         with open("../map/agent_id_map.txt", "w") as file:
             for key, value in agent_id_map.items():
                 file.write(f"{key}: {value}\n")
+        rospy.loginfo(f"ID映射表为: {agent_id_map}")
 
     def data_task_map(self, agents_plan):
         global task_start_time_mapping, agent_id_map
         task_ids_map = {}
         for agent_plan in agents_plan:
-            print(len(agent_plan.plans), agent_plan.agentId)
-
             for plan in agent_plan.plans:
                 # 检查是否该任务类型已经在映射表中
                 if plan.taskCode not in task_start_time_mapping:
@@ -424,6 +404,7 @@ class JsonReassembler_srv:
         with open("../map/task_start_time_map.txt", "w") as file:
             for task_code, start_time in task_start_time_mapping.items():
                 file.write(f"TaskCode: {task_code}, StartTime: {start_time}\n")
+        rospy.loginfo(f"任务映射表为: {task_start_time_mapping}")
 
     # 解析JSON文件为AgentPlan实例的方法
     def parse_agent_plan(self, data):

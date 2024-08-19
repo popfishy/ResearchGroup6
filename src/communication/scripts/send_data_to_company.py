@@ -7,6 +7,7 @@ from WGS84toCartesian import PositionConvert
 import tf
 import json
 from group6_interfaces.msg import TimeSyn
+import threading
 
 vehicle_type = sys.argv[1]
 vehicle_num = int(sys.argv[2])
@@ -22,6 +23,9 @@ uav_num = None
 flag = True
 company_timestamp = 0
 ros_timestamp = 0
+poses_data = {}
+# 创建一个锁对象
+poses_data_lock = threading.Lock()
 
 
 def time_synchronization_callback(time_syn_msg):
@@ -61,7 +65,7 @@ def gazebo_data_callback(msg):
         multi_local_pose[vehicle_id].pose.orientation.z = euler[2]
 
         # 将xyz转化为经纬高
-        PC = PositionConvert(24.825729278675468, 120.8090772269676, 0)
+        PC = PositionConvert(24.4819, 119.616, 0)
         x = multi_local_pose[vehicle_id].pose.position.x
         y = multi_local_pose[vehicle_id].pose.position.y
         z = multi_local_pose[vehicle_id].pose.position.z
@@ -79,34 +83,36 @@ def gazebo_data_callback(msg):
 
 def msgTojson(multi_local_pose, multi_speed):
 
-    global flag, company_timestamp, ros_timestamp, agent_id_map
-
-    # 存储所有数据的字典
-    poses_data = {}
+    global flag, company_timestamp, ros_timestamp, agent_id_map, poses_data
 
     key = "SwarmTrajectoryResults"
     name = "ResearchGroup6"
     timestamp = company_timestamp + (rospy.Time.now().to_sec() - ros_timestamp)
 
-    poses_data["key"] = key
-    poses_data["name"] = name
-    poses_data["timestamp"] = timestamp
 
-    for i in range(vehicle_num):
-        dic = {}
-        dic["agentId"] = agent_id_map[i]
-        dic["velocity_x"] = multi_speed[i].twist.linear.x
-        dic["velocity_y"] = multi_speed[i].twist.linear.y
-        dic["velocity_z"] = multi_speed[i].twist.linear.z
-        dic["latitude"] = multi_local_pose[i].pose.position.x
-        dic["longitude"] = multi_local_pose[i].pose.position.y
-        dic["altitude"] = multi_local_pose[i].pose.position.z
-        dic["roll"] = multi_local_pose[i].pose.orientation.x
-        dic["pitch"] = multi_local_pose[i].pose.orientation.y
-        dic["yaw"] = multi_local_pose[i].pose.orientation.z
-        multi_path.append(dic)
+    poses_data_lock.acquire()
+    try:
+        poses_data["key"] = key
+        poses_data["name"] = name
+        poses_data["timestamp"] = timestamp
 
-    poses_data["agents"] = multi_path
+        for i in range(vehicle_num):
+            dic = {}
+            dic["agentId"] = agent_id_map[i]
+            dic["velocity_x"] = multi_speed[i].twist.linear.x
+            dic["velocity_y"] = multi_speed[i].twist.linear.y
+            dic["velocity_z"] = multi_speed[i].twist.linear.z
+            dic["latitude"] = multi_local_pose[i].pose.position.x
+            dic["longitude"] = multi_local_pose[i].pose.position.y
+            dic["altitude"] = multi_local_pose[i].pose.position.z
+            dic["roll"] = multi_local_pose[i].pose.orientation.x
+            dic["pitch"] = multi_local_pose[i].pose.orientation.y
+            dic["yaw"] = multi_local_pose[i].pose.orientation.z
+            multi_path.append(dic)
+
+        poses_data["agents"] = multi_path
+    finally:
+        poses_data_lock.release()
     save_data_to_json(poses_data, "ResearchGroup6Result.json")
 
 
@@ -120,9 +126,18 @@ def save_data_to_json(data, filename):
         file.write(json_str)
 
 
-def jsonTosting(filename):
-    with open(filename, "r", encoding="utf-8") as file:
-        json_data = file.read()
+def jsonTosting(filename = None):
+    global poses_data
+    poses_data_lock.acquire()
+    try:
+        json_data = json.dumps(poses_data, indent=4)
+    finally:
+        poses_data_lock.release()
+
+    if filename != None:
+        with open(filename, "r", encoding="utf-8") as file:
+            json_data = file.read()
+    
     # 计算字符串长度
     length_of_string = len(json_data)
     print(f"The length of the JSON string is: {length_of_string}")
@@ -133,7 +148,6 @@ def jsonTosting(filename):
     total_chunks = len(chunks)
 
     json_string_data = [PusimKeyString() for i in range(total_chunks)]
-    pusim_key_strings_msg = PusimsKeyString()
 
     for k in range(total_chunks):
         pusim_key_string = PusimKeyString()
@@ -145,6 +159,7 @@ def jsonTosting(filename):
         json_string_data[k] = pusim_key_string
 
     return json_string_data
+
 
 def get_mapping_table():
     global agent_id_map
@@ -168,7 +183,7 @@ if __name__ == "__main__":
 
     # rate = rospy.Rate(1)
     while not rospy.is_shutdown():
-        json_string_data = jsonTosting("ResearchGroup6Result.json")
+        json_string_data = jsonTosting()
         if company_timestamp != 0:
             for data in json_string_data:
                 pub.publish(data)

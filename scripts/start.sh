@@ -9,11 +9,16 @@ export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:~/catkin_ws/src/ORB_SLAM2/Examples/ROS
 clear
 alias python="python3"
 
+cd ~/ResearchGroup6/scripts
+echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
+
 # 定义变量
-UAV_NUM=3
+UAV_NUM=5
 
 gnome-terminal -- bash -c "cd ~/PX4_Firmware && roslaunch px4 multi_vehicle.launch"
 sleep 10
+gnome-terminal -- bash -c "cd ~/ResearchGroup6/scripts && ./QGroundControl.AppImage"
+sleep 2
 gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/fixed_wing_formation/scripts && bash multi_vehicle_communication.sh; exec bash"
 sleep 1.5
 gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/fixed_wing_formation/scripts && python plane_keyboard_control.py $UAV_NUM "

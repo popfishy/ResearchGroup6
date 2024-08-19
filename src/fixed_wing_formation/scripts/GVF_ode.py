@@ -12,6 +12,7 @@ import math
 
 tra_frame = 0
 
+
 class GVF_ode:
     # 初始化输入无人机id列表，无人机数量，初始坐标
     def __init__(self, plane_id, uav_num, x_coords, y_coords):
@@ -115,9 +116,14 @@ class GVF_ode:
         m_v3 = manual_v[0][2]
         # m_v3 = self.trajectory_list[tra_frame + 1][2]
         # m_v4 = manual_v[0][3]
-        m_v4 = (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) / self.trajectory_list[tra_frame + 1][3]
+        m_v4 = (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) / self.trajectory_list[
+            tra_frame + 1
+        ][3]
         # m_v5 = manual_v[0][4]
-        m_v5 = (-(self.trajectory_list[tra_frame + 1][0] - self.trajectory_list[tra_frame][0]) / self.trajectory_list[tra_frame + 1][3])
+        m_v5 = (
+            -(self.trajectory_list[tra_frame + 1][0] - self.trajectory_list[tra_frame][0])
+            / self.trajectory_list[tra_frame + 1][3]
+        )
 
         if uav_num != len_pos // (n + 2):
             print("Error! N is not correct!")
@@ -147,12 +153,16 @@ class GVF_ode:
             phi2 = self.alpha * (x2 - f2w)
             phi3 = self.alpha * (x3 - f3w)
             sign = (-1) ** n
-            v = np.array([sign * m_v5 - self.k1 * phi1,
-                    sign * (- m_v4) - self.k2 * phi2,
-                    - self.k3 * phi3 ,
+            v = np.array(
+                [
+                    sign * m_v5 - self.k1 * phi1,
+                    sign * (-m_v4) - self.k2 * phi2,
+                    -self.k3 * phi3,
                     sign * m_v5 + self.k1 * phi1,
-                    sign * - m_v4 + self.k2 * phi2])
-            
+                    sign * -m_v4 + self.k2 * phi2,
+                ]
+            )
+
             pfvf_all[j : j + n + 2, 0] = v
             phi = np.array([phi1, phi2, phi3])
             e_all[0, l : l + n] = phi
@@ -171,8 +181,19 @@ class GVF_ode:
         for tra_frame in range(len(self.trajectory_list) - 1):
             ### ode45
             t0, tf = 0, self.trajectory_list[tra_frame + 1][3]
-            numpoints = 313
-            self.drawnum = 1
+            # TODO numpoints应该通过计算得到，10m一个点
+            numpoints = int(
+                math.sqrt(
+                    (self.trajectory_list[tra_frame + 1][0] - self.trajectory_list[tra_frame][0]) ** 2
+                    + (self.trajectory_list[tra_frame + 1][1] - self.trajectory_list[tra_frame][1]) ** 2
+                )
+                / (10)
+            )
+            # TODO:
+            if numpoints==0:
+                print(self.trajectory_list[tra_frame + 1][0], self.trajectory_list[tra_frame][0])
+                print(self.trajectory_list[tra_frame + 1][1], self.trajectory_list[tra_frame][1])
+                
             t = np.linspace(t0, tf, numpoints)
             p_init = self.p_init
             if tra_frame > 0:
