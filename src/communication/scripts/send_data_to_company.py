@@ -66,7 +66,7 @@ def gazebo_data_callback(msg):
         y = multi_local_pose[vehicle_id].pose.position.y
         z = multi_local_pose[vehicle_id].pose.position.z
         # print(multi_local_pose[vehicle_id].pose)
-        lat, lon, alt = PC.XYZtoWGS84(x, y, z)
+        lat, lon, alt = PC.ENUtoWGS84(x, y, z)
         # print("-------------------------------------------------")
         multi_local_pose[vehicle_id].pose.position.x = lat
         multi_local_pose[vehicle_id].pose.position.y = lon
@@ -124,7 +124,6 @@ def jsonTosting(filename):
     with open(filename, "r", encoding="utf-8") as file:
         json_data = file.read()
     # 计算字符串长度
-    print(type(json_data))
     length_of_string = len(json_data)
     print(f"The length of the JSON string is: {length_of_string}")
     # 字符串每450字节分割
@@ -173,6 +172,6 @@ if __name__ == "__main__":
         if company_timestamp != 0:
             for data in json_string_data:
                 pub.publish(data)
-                rospy.sleep(0.2)
+                rospy.sleep(0.1)
         # rate.sleep()  # 等待直到下一次迭代
     rospy.spin()

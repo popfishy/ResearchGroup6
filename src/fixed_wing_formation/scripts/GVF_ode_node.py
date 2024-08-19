@@ -252,7 +252,7 @@ class GVF_ode_node:
                     target.pose.position.y = p[j, k * 5 + 1]
                     target.pose.position.z = p[j, k * 5 + 2]
                     self.pub_set[k].publish(target)
-                rospy.sleep(0.20)
+                rospy.sleep(0.1)
 
 
 if __name__ == "__main__":

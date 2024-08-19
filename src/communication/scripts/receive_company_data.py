@@ -39,14 +39,14 @@ class Task:
         agentId,
         beginTime,
         expectedDuration,
-        expectedQuantity,
-        order,
-        status,
         taskCode,
-        taskPhase,
         latitude,
         longitude,
         altitude,
+        expectedQuantity = None,
+        order= None,
+        status= None,
+        taskPhase= None,
         path=None,
     ):
         self.agentId = agentId
@@ -66,15 +66,25 @@ class Task:
     def from_dict(cls, plan_entry):
         """Helper to create an AgentPlan instance from a single plan dictionary."""
         targetpoints = [cls._parse_waypoint(wp) for wp in plan_entry["path"]]
+        # cls(
+        #     plan_entry["agentId"],
+        #     plan_entry["beginTime"],
+        #     plan_entry["expectedDuration"],
+        #     plan_entry["expectedQuantity"],
+        #     plan_entry["order"],
+        #     plan_entry["status"],
+        #     plan_entry["taskCode"],
+        #     plan_entry["taskPhase"],
+        #     plan_entry["latitude"],
+        #     plan_entry["longitude"],
+        #     plan_entry["altitude"],
+        #     targetpoints,
+        # )
         return cls(
             plan_entry["agentId"],
             plan_entry["beginTime"],
             plan_entry["expectedDuration"],
-            plan_entry["expectedQuantity"],
-            plan_entry["order"],
-            plan_entry["status"],
             plan_entry["taskCode"],
-            plan_entry["taskPhase"],
             plan_entry["latitude"],
             plan_entry["longitude"],
             plan_entry["altitude"],
@@ -277,7 +287,6 @@ class JsonReassembler_srv:
         rate = rospy.Rate(1)
         while not rospy.is_shutdown():
             self.time_synchronization_pub.publish(self.time_syn_msg)
-            print(self.time_syn_msg)
             rate.sleep()
 
     def callback(self, data):
@@ -330,9 +339,11 @@ class JsonReassembler_srv:
         self.data_task_map(agents_plan)
 
         # 定义参考点的GPS坐标
-        original_point = agents_plan[0].plans[0].path[0]
-        lat_ref = original_point.latitude  # 参考点纬度
-        lon_ref = original_point.longitude  # 参考点经度
+        # original_point = agents_plan[0].plans[0].path[0]
+        # lat_ref = agents_plan[0].plans[0].latitude  # 参考点纬度
+        # lon_ref = agents_plan[0].plans[0].longitude  # 参考点经度
+        lat_ref = 24.825729278675468
+        lon_ref = 120.8090772269676
         alt_ref = 0  # 参考点高度（海拔）
         # TODO 暂时无原点，使用第一架无人机的第一个航点的经纬度作为原点
         PC = PositionConvert(lat_ref, lon_ref, alt_ref)
@@ -345,11 +356,11 @@ class JsonReassembler_srv:
                 agent_msg.agentId = plan.agentId
                 plan_msg.beginTime = plan.beginTime
                 plan_msg.expectedDuration = plan.expectedDuration
-                plan_msg.expectedDuration = plan.expectedDuration
-                plan_msg.order = plan.order
-                plan_msg.status = plan.status
-                plan_msg.taskCode = plan.taskCode
+                # plan_msg.expectedQuantity = plan.expectedQuantity
+                # plan_msg.order = plan.order
+                # plan_msg.status = plan.status
                 plan_msg.taskPhase = plan.taskPhase
+                plan_msg.taskCode = plan.taskCode
                 plan_msg.latitude, plan_msg.longitude, plan_msg.altitude = PC.WGS84toENU(
                     plan.latitude, plan.longitude, plan.altitude
                 )
