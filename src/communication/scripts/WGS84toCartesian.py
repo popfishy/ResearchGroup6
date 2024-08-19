@@ -94,7 +94,7 @@ class PositionConvert:
         else:
             lat = math.degrees(self.ref_lat)
             lon = math.degrees(self.ref_lon)
-        alt = z
+        alt = z + self.ref_alt
 
         return lat, lon, alt
 
