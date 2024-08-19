@@ -157,7 +157,6 @@ class GVF_ode_node:
             for plan in agent_plans[first_id_of_task].plans:
                 if plan.taskCode == key:
                     for targetpoint in plan.targets:
-                        # TODO 时间戳信息不对   x,y,z坐标系需要修改
                         trajectory_list.append([targetpoint.x, targetpoint.y, targetpoint.z, targetpoint.timestep])
             gvf_ode.update_waypoint(trajectory_list)
             gvf_ode.calculate_path()

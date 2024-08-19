@@ -94,17 +94,16 @@ def msgTojson(multi_local_pose, multi_speed):
 
     for i in range(vehicle_num):
         dic = {}
-        # TODO agent_id_map
         dic["agentId"] = agent_id_map[i]
         dic["velocity_x"] = multi_speed[i].twist.linear.x
         dic["velocity_y"] = multi_speed[i].twist.linear.y
         dic["velocity_z"] = multi_speed[i].twist.linear.z
-        dic["altitude"] = multi_local_pose[i].pose.position.z
         dic["latitude"] = multi_local_pose[i].pose.position.x
         dic["longitude"] = multi_local_pose[i].pose.position.y
-        dic["yaw"] = multi_local_pose[i].pose.orientation.z
-        dic["pitch"] = multi_local_pose[i].pose.orientation.y
+        dic["altitude"] = multi_local_pose[i].pose.position.z
         dic["roll"] = multi_local_pose[i].pose.orientation.x
+        dic["pitch"] = multi_local_pose[i].pose.orientation.y
+        dic["yaw"] = multi_local_pose[i].pose.orientation.z
         multi_path.append(dic)
 
     poses_data["agents"] = multi_path

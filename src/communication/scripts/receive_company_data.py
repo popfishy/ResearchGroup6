@@ -193,7 +193,6 @@ class JsonReassembler:
             except ValueError:
                 rospy.logerr("Failed to parse JSON data")
 
-            # TODO 增加发布机制
             agent_plans = AgentPlan.all_from_json(received_json)
             if agent_plans:  # 确保列表不为空
                 # 定义参考点的GPS坐标
