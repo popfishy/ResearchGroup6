@@ -113,7 +113,7 @@ def msgTojson(multi_local_pose, multi_speed):
         poses_data["agents"] = multi_path
     finally:
         poses_data_lock.release()
-    save_data_to_json(poses_data, "ResearchGroup6Result.json")
+    save_data_to_json(poses_data, "../json/ResearchGroup6Result.json")
 
 
 def save_data_to_json(data, filename):

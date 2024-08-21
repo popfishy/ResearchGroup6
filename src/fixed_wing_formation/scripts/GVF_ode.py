@@ -191,9 +191,10 @@ class GVF_ode:
             )
             # TODO:
             if numpoints==0:
+                print("路径数量错误")
                 print(self.trajectory_list[tra_frame + 1][0], self.trajectory_list[tra_frame][0])
                 print(self.trajectory_list[tra_frame + 1][1], self.trajectory_list[tra_frame][1])
-                
+            
             t = np.linspace(t0, tf, numpoints)
             p_init = self.p_init
             if tra_frame > 0:

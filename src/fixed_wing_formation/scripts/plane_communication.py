@@ -85,12 +85,6 @@ class Communication:
             #                      PositionTarget.IGNORE_YAW |
             #                      PositionTarget.IGNORE_YAW_RATE)
             self.target_motion_pub.publish(self.target_motion)
-
-            # twist = TwistStamped()
-            # twist.twist.linear.x = -5
-            # twist.twist.linear.y = -15
-            # twist.twist.linear.z = 0
-            # self.motion_pub.publish(twist)
             try:
                 rate.sleep()
             except:

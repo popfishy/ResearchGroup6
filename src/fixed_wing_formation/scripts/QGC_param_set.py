@@ -63,3 +63,10 @@ if __name__ == "__main__":
     param_setter.set_float_param("FW_AIRSPD_TRIM",60.0)
     param_setter.set_float_param("FW_THR_MAX",100.0)
     param_setter.set_float_param("FW_THR_CRUISE",80.0)
+    # GPS used
+    param_setter.set_int_param("EKF2_AID_MASK",1)
+    # Barometer used for hight measurement
+    param_setter.set_int_param("EKF2_HGT_MODE",0)
+    param_setter.set_int_param("NAV_DLL_ACT",0)
+    param_setter.set_int_param("NAV_RCL_ACT",0)
+    param_setter.set_int_param("COM_RCL_EXCEPT",4)

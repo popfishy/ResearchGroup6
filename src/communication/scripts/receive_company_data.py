@@ -62,7 +62,7 @@ class Task:
         targetpoints = [cls._parse_waypoint(wp) for wp in plan_entry["path"]]
         return cls(
             plan_entry["agentId"],
-            plan_entry["taskCode"],
+            plan_entry["task_flag"],
             plan_entry["beginTime"],
             plan_entry["expectedDuration"],
             plan_entry["velocity"],
@@ -385,21 +385,23 @@ class JsonReassembler_srv:
 
     def data_task_map(self, agents_plan):
         global task_start_time_mapping, agent_id_map
-        task_ids_map = {}
+        task_start_time_mapping_ = {}
         for agent_plan in agents_plan:
             for plan in agent_plan.plans:
                 # 检查是否该任务类型已经在映射表中
-                if plan.taskCode not in task_start_time_mapping:
+                if plan.taskCode not in task_start_time_mapping_:
                     # 如果不在，添加该任务类型和对应的最早开始时间
-                    task_start_time_mapping[plan.taskCode] = [plan.beginTime, [agent_id_map[agent_plan.agentId]]]
+                    task_start_time_mapping_[plan.taskCode] = [plan.beginTime, [agent_id_map[agent_plan.agentId]]]
                 else:
                     # 如果已存在，比较并更新为更早的开始时间（如果需要）
-                    if plan.beginTime < task_start_time_mapping[plan.taskCode][0]:
-                        value = task_start_time_mapping[plan.taskCode]
-                        task_start_time_mapping[plan.taskCode] = [plan.beginTime, value[1]]
-                    value = task_start_time_mapping[plan.taskCode]
+                    if plan.beginTime < task_start_time_mapping_[plan.taskCode][0]:
+                        value = task_start_time_mapping_[plan.taskCode]
+                        task_start_time_mapping_[plan.taskCode] = [plan.beginTime, value[1]]
+                    value = task_start_time_mapping_[plan.taskCode]
                     value[1].append(agent_id_map[agent_plan.agentId])
-                    task_start_time_mapping[plan.taskCode] = value
+                    task_start_time_mapping_[plan.taskCode] = value
+        sorted_mapping = sorted(task_start_time_mapping_.items(), key=lambda x: x[1][0])
+        task_start_time_mapping = {k: v for k, v in sorted_mapping}
         # 将映射表写入txt文件
         with open("../map/task_start_time_map.txt", "w") as file:
             for task_code, start_time in task_start_time_mapping.items():

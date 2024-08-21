@@ -31,10 +31,10 @@ class Task:
         latitude,
         longitude,
         altitude,
-        expectedQuantity = None,
-        order= None,
-        status= None,
-        taskPhase= None,
+        expectedQuantity=None,
+        order=None,
+        status=None,
+        taskPhase=None,
         path=None,
     ):
         self.agentId = agentId
@@ -84,7 +84,7 @@ class GVF_ode_node:
         # 初始化任务
         id_map, task_map = self.get_mapping_table()
         # 初始化QGC参数
-        self.init_qgc_params(self.uav_type, len(id_map))
+        # self.init_qgc_params(self.uav_type, len(id_map))
 
         # 生成无人机位置发布器
         self.generate_pub_set(id_map)
@@ -111,10 +111,19 @@ class GVF_ode_node:
 
     def init_qgc_params(self, uav_type, vehicle_num):
         self.qgc_param_setter = QGCParamSetter(uav_type, vehicle_num)
+        # 空速
         self.qgc_param_setter.set_float_param("FW_AIRSPD_MAX", 80.0)
         self.qgc_param_setter.set_float_param("FW_AIRSPD_TRIM", 60.0)
+        # 油门
         self.qgc_param_setter.set_float_param("FW_THR_MAX", 100.0)
         self.qgc_param_setter.set_float_param("FW_THR_CRUISE", 80.0)
+        # GPS used
+        self.qgc_param_setter.set_int_param("EKF2_AID_MASK", 1)
+        # Barometer used for hight measurement
+        self.qgc_param_setter.set_int_param("EKF2_HGT_MODE", 0)
+        self.qgc_param_setter.set_int_param("NAV_DLL_ACT", 0)
+        self.qgc_param_setter.set_int_param("NAV_RCL_ACT", 0)
+        self.qgc_param_setter.set_int_param("COM_RCL_EXCEPT", 4)
 
     def generate_pub_set(self, id_map):
         for pub in self.pub_set:
@@ -141,9 +150,11 @@ class GVF_ode_node:
                 if plan.taskCode == key:
                     for targetpoint in plan.targets:
                         now_timestamp = targetpoint.timestep
-                        # TODO 因为课题五的错误数据
+                        # TODO 因为课题五的错误数据  系数为方便验证
                         time_expectation = (now_timestamp - last_timestamp) if now_timestamp > last_timestamp else 10
-                        trajectory_list.append([targetpoint.x, targetpoint.y, targetpoint.z, time_expectation])
+                        trajectory_list.append(
+                            [targetpoint.x * 0.1, targetpoint.y * 0.1, targetpoint.z, time_expectation]
+                        )
                         last_timestamp = now_timestamp
             gvf_ode.update_waypoint(trajectory_list)
             gvf_ode.calculate_path()
@@ -229,7 +240,6 @@ class GVF_ode_node:
             # self.publish_targets(gvf_ode, uav_ids)
 
     def publish_targets(self, gvf_ode, uav_ids):
-        print(uav_ids)
         for i in range(len(gvf_ode.trajectory_list) - 1):
             p = gvf_ode.global_paths[i]
             # TODO：发布的目标点的数量
@@ -241,6 +251,7 @@ class GVF_ode_node:
                     target.pose.position.y = p[j, k * 5 + 1]
                     target.pose.position.z = p[j, k * 5 + 2]
                     self.pub_set[uav_ids[k]].publish(target)
+            # TODO 加入目标点判断机制
                 rospy.sleep(0.4)
 
 

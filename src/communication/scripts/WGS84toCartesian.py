@@ -173,8 +173,8 @@ class PositionConvert:
 
 
 if __name__ == '__main__':
-    PC = PositionConvert(24.478099075731514, 119.62190518561758, 0)
-    x, y, z = PC.WGS84toENU(24.525258242157623, 120.60251394462703, 0)
+    PC = PositionConvert(24.4963, 119.641, 0)
+    x, y, z = PC.WGS84toENU(24.49629756972056, 119.61890806567516, 0)
     print(x, y, z)
     lat, lon, alt = PC.ENUtoWGS84(x, y, z)
     print("原点转化:",lat, lon, alt)
