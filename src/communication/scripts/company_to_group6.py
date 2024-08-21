@@ -14,7 +14,7 @@ def paras_json_data(filename):
         return pusim_key_strings_msg
 def main():
     rospy.init_node("send_company_data")
-    pub = rospy.Publisher("/ResearchGroup5ResultTest", PusimKeyString, queue_size=1)
+    pub = rospy.Publisher("/ResearchGroup5Result", PusimKeyString, queue_size=1)
     filename = "../json/test.json"
     plan_data = paras_json_data(filename)
 

@@ -14,9 +14,10 @@ from group6_interfaces.srv import DronePlans, DronePlansResponse, DronePlansRequ
 # from rospy_message_converter import json_message_converter
 from WGS84toCartesian import PositionConvert
 import socket
-
+import threading
 
 # global variable
+test_flag = False
 last_key = -1
 agent_id_map = {}
 task_start_time_mapping = {}
@@ -95,158 +96,6 @@ class AgentPlan:
         self.plans = plans if plans is not None else []
 
 
-# 话题
-class JsonReassembler:
-    def __init__(self):
-        self.data_segments = {}
-        self.total_size = 0
-        self.received_data = ""
-        self.test_flag = False
-        rospy.Subscriber("/ResearchGroup5Result", PusimKeyString, self.callback)
-        # 定义每架无人机的发布对象
-        # agent_plan_pub = [None] * vehicle_num
-        # for i in range(vehicle_num):
-        #     agent_plan_pub[i] = rospy.Publisher('/Vehicle_' + str(i) + '/trace_point', EntityData, queue_size=10)
-
-        self.agents_plan_pub = rospy.Publisher("/AgentsData", AgentsData, queue_size=1)
-
-    def callback(self, data):
-        # 处理接收到的消息
-        index = data.index
-        size = data.size
-        key = data.key
-        segment_data = data.data
-        if not self.total_size:
-            self.total_size = size
-
-        # 存储数据片段
-        self.data_segments[index] = segment_data
-        # print("%s",segment_data)
-
-        # 检查是否所有数据都已接收
-        if len(self.data_segments) == self.total_size:
-            self.reassemble_data_then_pub()
-
-    def reassemble_data_then_pub(self):
-        if self.test_flag:
-            agent_plans = self.parse_agent_plan_from_file("../json/ResearchGroup5Result.json")
-            if agent_plans:  # 确保列表不为空
-                # 定义参考点的GPS坐标
-                original_point = agent_plans[0].path[0]
-                lat_ref = original_point.latitude  # 参考点纬度
-                lon_ref = original_point.longitude  # 参考点经度
-                alt_ref = original_point.altitude  # 参考点高度（海拔）
-
-                # TODO 暂时无原点，使用第一架无人机的第一个航点的经纬度作为原点
-                PC = PositionConvert(lat_ref, lon_ref, alt_ref)
-
-                agents_msg = AgentsData()
-                for agent_plan in agent_plans:
-                    # print(f"无人机ID: {agent_plan.agentId}")
-                    # print("航点路径:")
-                    agent_msg = AgentData()
-                    targets_msg = Targets()
-                    agent_msg.agentId = agent_plan.agentId
-                    agent_msg.beginTime = agent_plan.beginTime
-                    agent_msg.durationTime = agent_plan.expectedDuration
-                    agent_msg.taskCode = agent_plan.taskCode
-                    for target_point in agent_plan.path:
-                        target_msg = Target()
-                        # 定义目标点的GPS坐标
-                        lat = target_point.latitude  # 目标点纬度
-                        lon = target_point.longitude  # 目标点经度
-                        alt = target_point.altitude  # 目标点高度（海拔）
-                        target_msg.x, target_msg.y, target_msg.z = PC.WGS84toNED(lat, lon, alt)
-                        # print(f"GPS_TO_XYZ: {target_msg.x}, {target_msg.y}, {target_msg.z}")
-                        target_msg.timestep = target_point.timestep
-                        target_msg.velocity = target_point.velocity
-                        targets_msg.targets.append(target_msg)
-                    agent_msg.targets = targets_msg
-                    agents_msg.agents_data.append(agent_msg)
-                for agent in agents_msg.agents_data:
-                    print(agent)
-                self.agents_plan_pub.publish(agents_msg)
-        else:
-            try:
-                # 按照index排序并重组数据
-                sorted_segments = [self.data_segments[i] for i in sorted(self.data_segments)]
-                self.received_data = "".join(sorted_segments)
-                # 尝试解析重组后的JSON数据
-                received_json = json.loads(self.received_data)
-                rospy.loginfo("Reconstructed JSON data: %s", received_json)
-                # 将重组后的JSON数据保存到本地文件
-                with open("../json/ResearchGroup5Result.json", "w") as file:
-                    json.dump(received_json, file, indent=4)
-                rospy.loginfo("JSON data saved to ResearchGroup5Result.json")
-            except ValueError:
-                rospy.logerr("Failed to parse JSON data")
-
-            agent_plans = AgentPlan.all_from_json(received_json)
-            if agent_plans:  # 确保列表不为空
-                # 定义参考点的GPS坐标
-                original_point = agent_plans[0].path[0]
-                lat_ref = original_point.latitude  # 参考点纬度
-                lon_ref = original_point.longitude  # 参考点经度
-                alt_ref = original_point.altitude  # 参考点高度（海拔）
-
-                # TODO 暂时无原点，使用第一架无人机的第一个航点的经纬度作为原点
-                PC = PositionConvert(lat_ref, lon_ref, alt_ref)
-
-                agents_msg = AgentsData()
-                for agent_plan in agent_plans:
-                    agent_msg = AgentData()
-                    agent_msg.agentId = agent_plan.agentId
-                    agent_msg.beginTime = agent_plan.beginTime
-                    agent_msg.durationTime = agent_plan.expectedDuration
-                    agent_msg.taskCode = agent_plan.taskCode
-                    for target_point in agent_plan.path:
-                        # 定义目标点的GPS坐标
-                        lat = target_point.latitude  # 目标点纬度
-                        lon = target_point.longitude  # 目标点经度
-                        alt = target_point.altitude  # 目标点高度（海拔）
-                        x_new, y_new, z_new = PC.WGS84toNED(lat, lon, alt)
-                        agent_msg.targets.append(
-                            Targetpoint(x_new, y_new, z_new, target_point.timestep, target_point.velocity)
-                        )
-                    agents_msg.agents_data.append(agent_msg)
-                self.agents_plan_pub.publish(agents_msg)
-
-        self.data_segments.clear()  # 清除缓存
-        self.received_data = ""  # 清空重组数据
-        self.total_size = 0
-
-    # 解析JSON文件为AgentPlan实例的方法
-    def parse_agent_plan(self, data):
-        """Parse JSON data into AgentPlan instances."""
-        agent_plans = []
-        for plan_entry in data:
-            target_points = [Targetpoint(**wp) for wp in plan_entry["path"]]  # 将每个航点数据转换为Targetpoint对象
-            agent_plan = AgentPlan(
-                plan_entry["agentId"],
-                plan_entry["beginTime"],
-                plan_entry["expectedDuration"],
-                plan_entry["taskCode"],
-                target_points,
-            )
-            agent_plans.append(agent_plan)  # 将创建的AgentPlan对象添加到列表中
-        return agent_plans
-
-    def parse_agent_plan_from_file(self, file_path):
-        """从指定JSON文件解析出AgentPlan实例列表"""
-        with open(file_path, "r", encoding="utf-8") as file:  # 打开并读取JSON文件
-            data = json.load(file)  # 加载JSON文件内容为Python对象
-            planned_results = data.get("Planned_result", [])  # 获取"Planned_result"部分数据
-            agent_plans = self.parse_agent_plan(planned_results)  # 解析数据
-            file.close()
-        return agent_plans
-
-    def parse_agent_plan_from_data(self, data):
-        data = json.load(data)
-        planned_results = data.get("Planned_result", [])  # 获取"Planned_result"部分数据
-        agent_plans = self.parse_agent_plan(planned_results)  # 解析数据
-        return agent_plans
-
-
 # 服务请求
 class JsonReassembler_srv:
     def __init__(self):
@@ -255,6 +104,18 @@ class JsonReassembler_srv:
         self.received_data = ""
 
         self.time_syn_msg = TimeSyn()
+
+        # 创建一个客户端 Socket 对象
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # 设置服务端地址和端口号
+        self.server_address = ('10.66.1.90', 13335) 
+        # 连接到服务端
+        self.client_socket.connect(self.server_address)
+        print("连接到服务端成功")
+        # 创建一个线程，在该线程中接收数据
+        receive_thread = threading.Thread(target=self.callback, args=(self.client_socket,))
+        receive_thread.start()
+
         rospy.Subscriber("/ResearchGroup5Result", PusimKeyString, self.callback, queue_size=10)
         self.time_synchronization_pub = rospy.Publisher("/TimeSyn", TimeSyn, queue_size=1)
         self.agents_plan_client = rospy.ServiceProxy("/AgentsData", DronePlans)
@@ -266,41 +127,32 @@ class JsonReassembler_srv:
             self.time_synchronization_pub.publish(self.time_syn_msg)
             rate.sleep()
 
-    def callback(self, data):
-        # 处理接收到的消息
-        index = data.index
-        size = data.size
-        if not self.total_size:
-            self.total_size = size
+    def callback(self, client_socket):
+        buffer = b""
+        while True:
+            data = client_socket.recv(1024)  # 每次最多接收 1024 字节
+            if not data:
+                break
+            buffer += data
+            while buffer.find(b'\n') != -1:  # 以换行符为数据分隔符
+                line, buffer = buffer.split(b'\n', 1)
+                received_json = json.loads(line.decode())
 
-        # 存储数据片段
-        self.data_segments[index] = data.data
-
-        # 检查是否所有数据都已接收
-        # print(f"index = {index}, len(self.data_segments) = {len(self.data_segments)},self.total_size = {self.total_size}")
-        if len(self.data_segments) == (self.total_size):
-            # print(f"len(self.data_segments) = {len(self.data_segments)},self.total_size = {self.total_size}")
-            try:
-                # 按照index排序并重组数据
-                sorted_segments = [self.data_segments[i] for i in sorted(self.data_segments)]
-                self.received_data = "".join(sorted_segments)
-                # 尝试解析重组后的JSON数据
-                received_json = json.loads(self.received_data)
+                # TODO:判断接收完毕
                 # 将重组后的JSON数据保存到本地文件
                 with open("../json/ResearchGroup5Result.json", "w") as file:
                     json.dump(received_json, file, indent=4)
                 rospy.loginfo("JSON data saved to ResearchGroup5Result.json")
-            except ValueError:
-                rospy.logerr("Failed to parse JSON data")
 
-            agents_plan = self.parse_agent_plan_from_data(received_json)
-            self.reassemble_data_then_client(agents_plan)
 
-            self.data_segments.clear()  # 清除缓存
-            self.received_data = ""  # 清空重组数据
-            self.total_size = 0
+                agents_plan = self.parse_agent_plan_from_data(received_json)
+                self.reassemble_data_then_client(agents_plan)
 
     def reassemble_data_then_client(self, agents_plan=None):
+        global test_flag
+        if test_flag:
+            agents_plan = self.parse_agent_plan_from_file("../json/test.json")
+
         # 排序
         agents_plan = self.data_sort(agents_plan)
 

@@ -151,9 +151,10 @@ class GVF_ode_node:
                     for targetpoint in plan.targets:
                         now_timestamp = targetpoint.timestep
                         # TODO 因为课题五的错误数据  系数为方便验证
+                        coefficient = 1
                         time_expectation = (now_timestamp - last_timestamp) if now_timestamp > last_timestamp else 10
                         trajectory_list.append(
-                            [targetpoint.x * 0.1, targetpoint.y * 0.1, targetpoint.z, time_expectation]
+                            [targetpoint.x * coefficient, targetpoint.y * coefficient, targetpoint.z, time_expectation]
                         )
                         last_timestamp = now_timestamp
             gvf_ode.update_waypoint(trajectory_list)
@@ -251,7 +252,7 @@ class GVF_ode_node:
                     target.pose.position.y = p[j, k * 5 + 1]
                     target.pose.position.z = p[j, k * 5 + 2]
                     self.pub_set[uav_ids[k]].publish(target)
-            # TODO 加入目标点判断机制
+                # TODO 加入目标点判断机制
                 rospy.sleep(0.4)
 
 

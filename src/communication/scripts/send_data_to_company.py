@@ -99,12 +99,14 @@ def msgTojson(multi_local_pose, multi_speed):
         for i in range(vehicle_num):
             dic = {}
             dic["agentId"] = agent_id_map[i]
+            # 速度存在坐标系方向问题
             dic["velocity_x"] = multi_speed[i].twist.linear.x
             dic["velocity_y"] = multi_speed[i].twist.linear.y
             dic["velocity_z"] = multi_speed[i].twist.linear.z
             dic["latitude"] = multi_local_pose[i].pose.position.x
             dic["longitude"] = multi_local_pose[i].pose.position.y
             dic["altitude"] = multi_local_pose[i].pose.position.z
+            # 飞机机体坐标系
             dic["roll"] = multi_local_pose[i].pose.orientation.x
             dic["pitch"] = multi_local_pose[i].pose.orientation.y
             dic["yaw"] = multi_local_pose[i].pose.orientation.z
@@ -140,7 +142,6 @@ def jsonTosting(filename = None):
     
     # 计算字符串长度
     length_of_string = len(json_data)
-    print(f"The length of the JSON string is: {length_of_string}")
     # 字符串每450字节分割
     chunk_size = 450
     chunks = [json_data[i : i + chunk_size] for i in range(0, len(json_data), chunk_size)]
@@ -155,7 +156,6 @@ def jsonTosting(filename = None):
         pusim_key_string.index = k
         pusim_key_string.size = total_chunks
         pusim_key_string.data = chunks[k]
-        # json_strings_data.PusimKeyStrings.append(json_strings_data[i])
         json_string_data[k] = pusim_key_string
 
     return json_string_data
@@ -188,5 +188,6 @@ if __name__ == "__main__":
             for data in json_string_data:
                 pub.publish(data)
                 rospy.sleep(0.1)
+            rospy.loginfo_once("成功给公司发布数据")
         # rate.sleep()  # 等待直到下一次迭代
     rospy.spin()
