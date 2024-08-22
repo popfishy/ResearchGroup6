@@ -1,6 +1,7 @@
 #### 一、使用说明
 
 1. 请[自行配置PX4和XTDrone环境](https://www.yuque.com/xtdrone/manual_cn/basic_config_13)(具体为ros noetic + px4 1.13)，下载QGC地面站，并将地面站QGroundControl.AppImage放在scripts文件夹下。
+1. 主从机设置：由课题七服务器担任主机最佳，需设置ip地址为10.66.1.**即可。建议设置为10.66.1.192为主机ip。公司方为windows系统，主机与windows通信需下载rosserial包，并运行roslaunch rosserial socket.launch即可。
 2. 阅读scripts脚本目录下的start.sh文件，修改相应配置，'dji'中修改为自己电脑密码。
 
 ```
@@ -60,6 +61,7 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
       ]
    }
    ```
+
 
 
 #### 二、后续工作
