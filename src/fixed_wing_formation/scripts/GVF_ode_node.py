@@ -10,6 +10,7 @@ import threading
 # Global variable
 agent_id_map = {}  # 格式为{0：103015，1: 103019}
 task_start_time_mapping = {}
+FW_AIRSPD_TRIM = 15  # 空速
 
 
 class Targetpoint:
@@ -20,34 +21,33 @@ class Targetpoint:
         self.timestep = timestep
         self.velocity = velocity
 
-
 class Task:
     def __init__(
         self,
         agentId,
+        taskCode,
         beginTime,
         expectedDuration,
-        taskCode,
+        expectedQuantity,
+        velocity,
         latitude,
         longitude,
         altitude,
-        expectedQuantity=None,
-        order=None,
-        status=None,
-        taskPhase=None,
+        order,
+        status,
         path=None,
     ):
         self.agentId = agentId
         self.beginTime = beginTime
         self.expectedDuration = expectedDuration
+        self.expectedQuantity = expectedQuantity
         self.taskCode = taskCode
+        self.velocity = velocity
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
         self.order = order
         self.status = status
-        self.taskPhase = taskPhase
-        self.expectedQuantity = expectedQuantity
         self.path = path if path is not None else []
 
 
@@ -142,19 +142,26 @@ class GVF_ode_node:
         for key, value in task_map.items():
             trajectory_list = []
             uav_num = len(value[1])
+            # TODO 速度缩放因子对无人机编队队形有影响，需对输出进行处理
             x_coords, y_coords = self.generate_drone_positions(uav_num, 100, 100)
             gvf_ode = GVF_ode(value[1], uav_num, x_coords, y_coords)
             first_id_of_task = value[1][0]
             for plan in agent_plans[first_id_of_task].plans:
                 last_timestamp = plan.beginTime
+                # TODO 速度缩放因子，解决速度无法达到预期速度的问题
+                velocity_scaling = FW_AIRSPD_TRIM / plan.velocity
                 if plan.taskCode == key:
                     for targetpoint in plan.targets:
                         now_timestamp = targetpoint.timestep
-                        # TODO 因为课题五的错误数据  系数为方便验证
-                        coefficient = 1
+                        # TODO 课题五可能存在错误数据
                         time_expectation = (now_timestamp - last_timestamp) if now_timestamp > last_timestamp else 10
                         trajectory_list.append(
-                            [targetpoint.x * coefficient, targetpoint.y * coefficient, targetpoint.z, time_expectation]
+                            [
+                                targetpoint.x,
+                                targetpoint.y,
+                                targetpoint.z,
+                                time_expectation,
+                            ]
                         )
                         last_timestamp = now_timestamp
             gvf_ode.update_waypoint(trajectory_list)

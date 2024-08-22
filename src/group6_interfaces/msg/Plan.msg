@@ -2,6 +2,7 @@ float64 beginTime
 float64 expectedDuration
 float64 expectedQuantity
 string taskCode
+float64 velocity
 float64 altitude
 float64 latitude
 float64 longitude

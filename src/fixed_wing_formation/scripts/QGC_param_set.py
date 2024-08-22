@@ -59,10 +59,12 @@ if __name__ == "__main__":
     vehicle_num = int(sys.argv[2])
     rospy.init_node('param_setter')
     param_setter = QGCParamSetter(vehicle_type, vehicle_num)
-    param_setter.set_float_param("FW_AIRSPD_MAX",80.0)
-    param_setter.set_float_param("FW_AIRSPD_TRIM",60.0)
-    param_setter.set_float_param("FW_THR_MAX",100.0)
-    param_setter.set_float_param("FW_THR_CRUISE",80.0)
+    param_setter.set_float_param("FW_AIRSPD_MAX",60.0)
+    param_setter.set_float_param("FW_AIRSPD_TRIM",40.0)
+    param_setter.set_float_param("FW_THR_MAX",1.0)
+    param_setter.set_float_param("FW_THR_CRUISE",0.8)
+
+    param_setter.set_float_param("EKF2_ASPD_MAX",50.0)
     # GPS used
     param_setter.set_int_param("EKF2_AID_MASK",1)
     # Barometer used for hight measurement

@@ -24,7 +24,6 @@ flag = True
 company_timestamp = 0
 ros_timestamp = 0
 poses_data = {}
-# 创建一个锁对象
 poses_data_lock = threading.Lock()
 
 
@@ -64,8 +63,8 @@ def gazebo_data_callback(msg):
         multi_local_pose[vehicle_id].pose.orientation.y = euler[1]
         multi_local_pose[vehicle_id].pose.orientation.z = euler[2]
 
-        # 将xyz转化为经纬高
-        PC = PositionConvert(24.4819, 119.616, 0)
+        # TODO：未确定原点  将xyz转化为经纬高
+        PC = PositionConvert(24.504, 119.611, 0)
         x = multi_local_pose[vehicle_id].pose.position.x
         y = multi_local_pose[vehicle_id].pose.position.y
         z = multi_local_pose[vehicle_id].pose.position.z
