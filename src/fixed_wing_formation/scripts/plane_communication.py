@@ -36,7 +36,7 @@ class Communication:
         self.cmd_pose_enu_sub = rospy.Subscriber("/xtdrone/"+self.vehicle_type+'_'+self.vehicle_id+"/cmd_pose_enu", Pose, self.cmd_pose_enu_callback,queue_size=1)     
         self.cmd_sub = rospy.Subscriber("/xtdrone/"+self.vehicle_type+'_'+self.vehicle_id+"/cmd",String,self.cmd_callback,queue_size=3)
         # add 
-        self.gazebo_sub = rospy.Subscriber("gazebo/model_states", ModelStates, self.position_callbak, queue_size=1)
+        # self.gazebo_sub = rospy.Subscriber("gazebo/model_states", ModelStates, self.position_callbak, queue_size=1)
 
         ''' 
         ros publishers
@@ -53,10 +53,10 @@ class Communication:
 
         print("communication initialized")
 
-    def position_callbak(self,msg):
-        model_states = list(zip(msg.name, msg.pose, msg.twist))[1:]
-        self.sorted_model_states = sorted(model_states, key=lambda x: eval(x[0].split("_")[1]))
-        self.now_position.position = self.sorted_model_states[0][1].position
+    # def position_callbak(self,msg):
+    #     model_states = list(zip(msg.name, msg.pose, msg.twist))[1:]
+    #     self.sorted_model_states = sorted(model_states, key=lambda x: eval(x[0].split("_")[1]))
+    #     self.now_position.position = self.sorted_model_states[0][1].position
 
     def start(self):
         '''

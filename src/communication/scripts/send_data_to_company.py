@@ -97,20 +97,20 @@ def msgTojson(multi_local_pose, multi_speed):
 
         for i in range(vehicle_num):
             dic = {}
-            dic["agentId"] = agent_id_map[i]
-            # 速度存在坐标系方向问题
-            dic["velocity_x"] = multi_speed[i].twist.linear.x
-            dic["velocity_y"] = multi_speed[i].twist.linear.y
-            dic["velocity_z"] = multi_speed[i].twist.linear.z
-            dic["latitude"] = multi_local_pose[i].pose.position.x
-            dic["longitude"] = multi_local_pose[i].pose.position.y
-            dic["altitude"] = multi_local_pose[i].pose.position.z
-            # 飞机机体坐标系
-            dic["roll"] = multi_local_pose[i].pose.orientation.x
-            dic["pitch"] = multi_local_pose[i].pose.orientation.y
-            dic["yaw"] = multi_local_pose[i].pose.orientation.z
-            multi_path.append(dic)
-
+            if i < len(agent_id_map):
+                dic["agentId"] = agent_id_map[i]
+                # 速度存在坐标系方向问题
+                dic["velocity_x"] = multi_speed[i].twist.linear.x
+                dic["velocity_y"] = multi_speed[i].twist.linear.y
+                dic["velocity_z"] = multi_speed[i].twist.linear.z
+                dic["latitude"] = multi_local_pose[i].pose.position.x
+                dic["longitude"] = multi_local_pose[i].pose.position.y
+                dic["altitude"] = multi_local_pose[i].pose.position.z
+                # 飞机机体坐标系
+                dic["roll"] = multi_local_pose[i].pose.orientation.x
+                dic["pitch"] = multi_local_pose[i].pose.orientation.y
+                dic["yaw"] = multi_local_pose[i].pose.orientation.z
+                multi_path.append(dic)
         poses_data["agents"] = multi_path
     finally:
         poses_data_lock.release()
