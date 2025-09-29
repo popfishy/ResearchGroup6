@@ -1,3 +1,7 @@
+# 版本管理
+
+## 版本 V1.0  日期 2024.08.23
+
 #### 一、使用说明
 
 1. 请[自行配置PX4和XTDrone环境](https://www.yuque.com/xtdrone/manual_cn/basic_config_13)(具体为ros noetic + px4 1.13)，下载QGC地面站，并将地面站QGroundControl.AppImage放在scripts文件夹下。
@@ -70,4 +74,52 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 2. 如何解决固定翼飞机的local坐标系原点为px4上电位置（获取固定翼飞机在gazebo中初始化的位置表，课题七还没给我们）
 3. 空速无法到达60m/s，可能需要等比例缩放数据。（可行解决办法：[修改gazebo中plane模型动力相关参数，修改混控器](https://www.yuque.com/xtdrone/manual_cn/control_mapping)等）
  - 最终采用比例缩放数据，除了对目标点相对位置进行缩放外，需具体对无人机队形进行处理。
+
+
+
+## 版本 V2.0  日期 2025.09.24
+
+
+
+主要修改成符合课题六仿真验证指标的流程数据。
+
+
+
+疑问：
+
+1.如果我要自己加具体经度维度高度如何设置？
+
+2.准备任务很奇怪。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

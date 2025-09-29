@@ -2,7 +2,7 @@
 Author: popfishy
 Date: 2024-06-24 21:14:25
 LastEditors: Please set LastEditors
-LastEditTime: 2024-06-24 23:46:35
+LastEditTime: 2025-09-25 23:46:35
 Description: 
 """
 
@@ -22,6 +22,19 @@ agent_id_map = {}
 task_start_time_mapping = {}
 first_receive_flag = True
 
+task_counter = {
+    "准备": 0,
+    "侦察": 0,
+    "跟踪": 0
+}
+
+TASK_NAME_MAP = {
+    "准备": "Prepare",
+    "侦察": "Recon",
+    "跟踪": "Track"
+}
+
+
 # Path_message
 class Targetpoint:
     def __init__(self, latitude, longitude, altitude, timestep, velocity):
@@ -39,20 +52,20 @@ class Task:
         taskCode,
         beginTime,
         expectedDuration,
-        expectedQuantity,
         velocity,
         latitude,
         longitude,
         altitude,
         order,
         status,
+        expectedQuantity=None,
         path=None,
     ):
         self.agentId = agentId
         self.taskCode = taskCode
         self.beginTime = beginTime
         self.expectedDuration = expectedDuration
-        self.expectedQuantity = expectedQuantity
+        self.expectedQuantity = expectedQuantity if expectedQuantity is not None else None
         self.velocity = velocity
         self.latitude = latitude
         self.longitude = longitude
@@ -128,28 +141,53 @@ class JsonReassembler_srv:
         if not self.total_size:
             self.total_size = size
 
-        # 存储数据片段
         self.data_segments[index] = data.data
 
         # 检查是否所有数据都已接收
         # print(f"index = {index}, len(self.data_segments) = {len(self.data_segments)},self.total_size = {self.total_size}")
         if len(self.data_segments) == (self.total_size):
-            # print(f"len(self.data_segments) = {len(self.data_segments)},self.total_size = {self.total_size}")
             try:
-                # 按照index排序并重组数据
                 sorted_segments = [self.data_segments[i] for i in sorted(self.data_segments)]
                 self.received_data = "".join(sorted_segments)
-                # 尝试解析重组后的JSON数据
                 received_json = json.loads(self.received_data)
-                # 将重组后的JSON数据保存到本地文件
-                with open("../json/ResearchGroup5Result.json", "w") as file:
-                    json.dump(received_json, file, indent=4)
-                rospy.loginfo("JSON data saved to ResearchGroup5Result.json")
+
+                planned_result = received_json.get("Planned_result", [])
+                if not planned_result:
+                    task_name = "Unknown"
+                else:
+                    task_name = planned_result[0].get("task_name", "Unknown")
+
+                if isinstance(task_name, str):
+                    pass
+                else:
+                    task_name = "Unknown"
+                
+                if task_name not in TASK_NAME_MAP:
+                    rospy.logwarn(f"Unknown task_name: {task_name}, using 'Unknown'")
+                    task_key = "Unknown"
+                    filename_prefix = "Unknown"
+                else:
+                    task_key = task_name
+                    filename_prefix = TASK_NAME_MAP[task_name]
+                
+                # 增加计数
+                global task_counter
+                task_counter[task_key] += 1
+                count = task_counter[task_key]
+
+                filename = f"../json/ResearchGroup5Result_{filename_prefix}_{count}.json"
+                with open(filename, "w", encoding="utf-8") as file:
+                    json.dump(received_json, file, indent=4, ensure_ascii=False)
+                rospy.loginfo(f"JSON data saved to {filename} (task: {task_name})")
+
+                # agents_plan = self.parse_agent_plan_from_data(received_json)
+                # self.reassemble_data_then_client(agents_plan)
+
             except ValueError:
                 rospy.logerr("Failed to parse JSON data")
+            except Exception as e:
+                rospy.logerr(f"Unexpected error during JSON processing: {e}")
 
-            agents_plan = self.parse_agent_plan_from_data(received_json)
-            self.reassemble_data_then_client(agents_plan)
 
             self.data_segments.clear()  # 清除缓存
             self.received_data = ""  # 清空重组数据
