@@ -1,0 +1,5 @@
+POS[] robot_pos
+POS[] task_pos
+---
+LS[10] path_list
+int8[] robotNum

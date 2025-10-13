@@ -1,0 +1,8 @@
+*.m~
+*.asv
+*.DS_Store
+*.pyc
+/.idea/**
+/.vscode/**
+/lib/__pycache__/**
+/test/__pycache__/**
