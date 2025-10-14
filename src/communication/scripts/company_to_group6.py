@@ -15,16 +15,16 @@ def paras_json_data(filename):
 def main():
     rospy.init_node("send_company_data")
     pub = rospy.Publisher("/ResearchGroup5Result", PusimKeyString, queue_size=1)
-    filename = "../json/test.json"
+    filename = "../json/ResearchGroup5Result_Prepare_1.json"
     plan_data = paras_json_data(filename)
 
     rospy.sleep(5)
     pub.publish(plan_data)
 
-    # rate = rospy.Rate(1)
-    # while not rospy.is_shutdown():
-    #     pub.publish(plan_data)
-    #     rate.sleep()
+    rate = rospy.Rate(0.5)
+    while not rospy.is_shutdown():
+        pub.publish(plan_data)
+        rate.sleep()
 
 if __name__ == '__main__':
     main()

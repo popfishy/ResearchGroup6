@@ -56,8 +56,8 @@ class Task:
         latitude,
         longitude,
         altitude,
-        order,
         status,
+        order=None,
         expectedQuantity=None,
         path=None,
     ):
@@ -65,13 +65,13 @@ class Task:
         self.taskCode = taskCode
         self.beginTime = beginTime
         self.expectedDuration = expectedDuration
-        self.expectedQuantity = expectedQuantity if expectedQuantity is not None else None
         self.velocity = velocity
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
-        self.order = order
         self.status = status
+        self.order = order if order is not None else 0
+        self.expectedQuantity = expectedQuantity if expectedQuantity is not None else None
         self.path = path if path is not None else []
 
     @classmethod
@@ -83,14 +83,14 @@ class Task:
             plan_entry["task_flag"],
             plan_entry["beginTime"],
             plan_entry["expectedDuration"],
-            plan_entry["expectedQuantity"],
             plan_entry["velocity"],
             plan_entry["latitude"],
             plan_entry["longitude"],
             plan_entry["altitude"],
-            plan_entry["order"],
             plan_entry["status"],
-            targetpoints,
+            order=plan_entry.get("order"),
+            expectedQuantity=plan_entry.get("expectedQuantity"),
+            path=targetpoints,
         )
 
     @staticmethod
@@ -176,12 +176,12 @@ class JsonReassembler_srv:
                 count = task_counter[task_key]
 
                 filename = f"../json/ResearchGroup5Result_{filename_prefix}_{count}.json"
-                with open(filename, "w", encoding="utf-8") as file:
-                    json.dump(received_json, file, indent=4, ensure_ascii=False)
+                # with open(filename, "w", encoding="utf-8") as file:
+                #     json.dump(received_json, file, indent=4, ensure_ascii=False)
                 rospy.loginfo(f"JSON data saved to {filename} (task: {task_name})")
 
-                # agents_plan = self.parse_agent_plan_from_data(received_json)
-                # self.reassemble_data_then_client(agents_plan)
+                agents_plan = self.parse_agent_plan_from_data(received_json)
+                self.reassemble_data_then_client(agents_plan)
 
             except ValueError:
                 rospy.logerr("Failed to parse JSON data")
