@@ -18,62 +18,61 @@ class UAV:
         self.init_global_position = np.array(initial_position, dtype=float)
         self.position = np.array(initial_position, dtype=float)
         self.velocity = np.array([0.0, 0.0, 0.0])
-        self.heading = initial_heading  # 初始航向角 (rad)
+        self.heading = initial_heading
         self.status = UAVStatus.STANDBY
         self.fuel = 100.0
         self.turn_radius = 100.0
-        self.max_speed = 40.0
-        self.min_speed = 15.0
+        self.max_speed = 60.0
+        self.min_speed = 20.0
         self.current_speed = 30.0
-        
-        # 任务相关
         self.current_mission = MissionType.IDLE
         self.group_id = None
-        
-        # 路径规划相关
-        self.waypoints = []  # 原始航路点 (仅领航者使用)
-        self.planned_path = []  # Dubins规划后的详细路径点 (仅领航者使用)
+        self.waypoints = []
+        self.planned_path = []
         self.current_path_index = 0
-        self.path_planner = None  # 外部路径规划器接口
-        
-        # 编队控制相关属性
-        self.is_leader = False
-        self.formation_target_pos = None  # 跟随者的动态目标位置 [x, y, z]
-        self.formation_target_heading = 0.0  # 跟随者的动态目标航向
-        
-        # 倍速控制相关
+        self.path_planner = None
         self.speed_multiplier = 1.0
-        
-        # 仿真控制
         self.position_history = [self.position.copy()]
         self.is_path_complete = False
         self.path_planning_complete = False
-    
+        
+        # === 【修改点 1】: 为编队添加必要的内部属性 ===
+        self.is_leader = False
+        self.leader: Optional['UAV'] = None  # 指向领航者对象的引用
+        self.formation_offset: Optional[Tuple[float, float]] = None # 相对于领航者的(dx, dy)偏移
+
+        # 这两个属性现在由 _update_follower_position 内部计算并使用
+        self.formation_target_pos = None
+        self.formation_target_heading = 0.0
+        
     def set_path_planner(self, path_planner):
-        """设置外部路径规划器"""
         self.path_planner = path_planner
         
-    # ==================== 编队角色控制方法 ====================
     def set_as_leader(self):
-        """将此无人机设置为领航者"""
         self.is_leader = True
-        self.formation_target_pos = None
+        self.leader = None
+        self.formation_offset = None
 
-    def set_as_follower(self):
-        """将此无人机设置为跟随者"""
+    # === 【修改点 2】: 修改 set_as_follower 方法，接收领航者和偏移量 ===
+    def set_as_follower(self, leader: 'UAV', offset: Tuple[float, float]):
+        """
+        将此无人机设置为跟随者。
+        :param leader: 领航者UAV对象。
+        :param offset: (dx, dy) 元组，表示在领航者坐标系中的相对位置。
+        """
         self.is_leader = False
+        self.leader = leader
+        self.formation_offset = offset
         self.waypoints = []
         self.planned_path = []
 
+    # set_formation_target 方法现在不再需要从外部调用，但保留以备将来扩展
     def set_formation_target(self, target_pos: Tuple[float, float, float], target_heading: float):
-        """为跟随者设置其动态的队形目标点"""
         if not self.is_leader:
             self.formation_target_pos = np.array(target_pos)
             self.formation_target_heading = target_heading
     
-    # ==================== 领航者专用方法 ====================
     def set_waypoints(self, waypoints: List[Tuple[float, float, float]]):
-        """设置航路点，触发Dubins路径规划 (主要由领航者调用)"""
         self.waypoints = [np.array(wp, dtype=float) for wp in waypoints]
         self.current_path_index = 0
         self.is_path_complete = False
@@ -81,53 +80,33 @@ class UAV:
         self._plan_dubins_path()
     
     def _plan_dubins_path(self):
-        """使用Dubins模型规划路径 (领航者逻辑)"""
-        if not self.waypoints or not self.path_planner:
-            return
-        
+        if not self.waypoints or not self.path_planner: return
         try:
             start_state = (self.position[0], self.position[1], self.heading)
             self.planned_path = []
             q0 = start_state
-            
             for wp in self.waypoints:
                 direction_vec = wp[:2] - np.array(q0[:2])
                 target_heading = np.arctan2(direction_vec[1], direction_vec[0]) if np.linalg.norm(direction_vec) > 1e-6 else q0[2]
                 q1 = (wp[0], wp[1], target_heading)
-                
-                # 调用Dubins库，最后一个参数是步长
                 segment_path, _ = self.path_planner.dubins_planner.plan(q0, q1, self.turn_radius, PATH_STEP_SIZE)
-                
-                if self.planned_path:
-                    self.planned_path.extend(segment_path[1:])
-                else:
-                    self.planned_path.extend(segment_path)
+                if self.planned_path: self.planned_path.extend(segment_path[1:])
+                else: self.planned_path.extend(segment_path)
                 q0 = q1
-
             self.path_planning_complete = True
             print(f"UAV-{self.id} (Leader): Dubins path planned with {len(self.planned_path)} points")
-            
         except Exception as e:
             print(f"UAV-{self.id}: Path planning failed: {e}")
 
-    # ==================== 仿真核心更新方法 ====================
     def update_position(self, dt: float):
-        """更新无人机位置 - 根据角色（领航者/跟随者）调用不同逻辑"""
         dt = dt * self.speed_multiplier
-            
-        if self.status != UAVStatus.ACTIVE:
-            return
+        if self.status != UAVStatus.ACTIVE: return
 
-        if self.is_leader:
-            self._update_leader_position(dt)
-        else:
-            self._update_follower_position(dt)
+        if self.is_leader: self._update_leader_position(dt)
+        else: self._update_follower_position(dt)
         
-        # --- 通用逻辑 ---
         fuel_consumption_rate = 0.1
-        self.fuel -= fuel_consumption_rate * dt
-        self.fuel = max(0.0, self.fuel)
-        
+        self.fuel = max(0.0, self.fuel - fuel_consumption_rate * dt)
         self.position_history.append(self.position.copy())
         
         if self.fuel <= 0 and self.status != UAVStatus.DESTROYED:
@@ -135,133 +114,114 @@ class UAV:
             self.destroy()
 
     def _update_leader_position(self, dt: float):
-        """
-        【已修正】领航者沿预设路径飞行。
-        通过计算dt内应前进的步数来更新路径索引，确保前进。
-        """
-        if not self.path_planning_complete or not self.planned_path or self.is_path_complete:
-            return
-        
-        # 1. 计算在dt时间内应飞行的距离
+        if not self.path_planning_complete or not self.planned_path or self.is_path_complete: return
         distance_to_travel = self.current_speed * dt
-        
-        # 2. 根据路径采样步长，计算应前进的路径点数量
-        # 确保至少前进一步，以避免速度过慢时卡住
         num_steps_to_advance = max(1, round(distance_to_travel / PATH_STEP_SIZE))
-        
-        # 3. 更新路径索引
         self.current_path_index += num_steps_to_advance
-        
-        # 4. 检查是否到达或超过终点
         if self.current_path_index >= len(self.planned_path) - 1:
             self.current_path_index = len(self.planned_path) - 1
             self.is_path_complete = True
             
-        # 5. 更新无人机状态到新的路径点
         new_point = self.planned_path[self.current_path_index]
         self.position[0], self.position[1] = new_point[0], new_point[1]
         self.heading = new_point[2]
-        
-        # 更新速度向量
-        self.velocity = np.array([
-            self.current_speed * np.cos(self.heading),
-            self.current_speed * np.sin(self.heading),
-            0.0
-        ])
+        self.velocity = np.array([self.current_speed * np.cos(self.heading), self.current_speed * np.sin(self.heading), 0.0])
         
     def _update_follower_position(self, dt: float):
-        """
-        【已修正】跟随者飞向其动态目标点。
-        使用比例导航制导律和一个更平滑的速度控制器，以实现稳定追踪。
-        """
-        if self.formation_target_pos is None:
-            # 没有目标，原地待命
+        if self.leader is None or self.formation_offset is None:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
-        # 1. 计算与目标点的几何关系
-        target_pos_2d = self.formation_target_pos[:2]
+
+        # 1. 计算理论目标点（这部分逻辑是正确的，保持不变）
+        leader_pos, leader_heading = self.leader.position, self.leader.heading
+        dx, dy = self.formation_offset
+        cos_h, sin_h = np.cos(leader_heading), np.sin(leader_heading)
+        
+        rotated_dx = dx * cos_h - dy * sin_h
+        rotated_dy = dx * sin_h + dy * cos_h
+        
+        self.formation_target_pos = np.array((
+            leader_pos[0] + rotated_dx,
+            leader_pos[1] + rotated_dy,
+            leader_pos[2]
+        ))
+        self.formation_target_heading = leader_heading
+        
+        # 2. 计算与目标点的几何关系
         current_pos_2d = self.position[:2]
+        target_pos_2d = self.formation_target_pos[:2]
         vector_to_target = target_pos_2d - current_pos_2d
         distance_to_target = np.linalg.norm(vector_to_target)
-        # 如果已经非常接近，直接吸附到目标点，避免在终点附近微小震荡
+
         if distance_to_target < 1.0:
             self.position[:2] = target_pos_2d
             self.heading = self.formation_target_heading
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
-        # 2. 【改进】平滑的速度控制
-        # 定义一个“减速区”，当无人机进入该区域时才开始减速
-        # 例如，减速区半径为无人机2秒的飞行距离
-        deceleration_radius = 2.0 * self.current_speed 
-        if distance_to_target < deceleration_radius:
-            # 在减速区内，速度与距离成正比
-            speed = self.current_speed * (distance_to_target / deceleration_radius)
-            # 设置一个最小速度，避免完全停下
-            speed = max(speed, self.min_speed * 0.5) 
+            
+        # === 【核心修正：动态速度控制器】 ===
+        # 根据与目标点的距离来调整速度，赋予跟随者追赶能力
+        leader_speed = self.leader.current_speed
+        
+        # 定义一个“舒适区半径”，在此范围内，速度与领航者匹配
+        COMFORT_RADIUS = 5.0 
+        # 定义一个“最大加速区半径”，超出此范围，就用最大速度追赶
+        MAX_BOOST_RADIUS = 100.0 
+        
+        speed = 0.0
+        if distance_to_target < COMFORT_RADIUS:
+            # 在舒适区内，速度逐渐向领航者速度靠拢，以实现稳定跟随
+            speed = leader_speed * (distance_to_target / COMFORT_RADIUS)
+            speed = max(speed, self.min_speed * 0.5) # 保证最低速度
+        elif distance_to_target > MAX_BOOST_RADIUS:
+            # 距离太远，开足马力追
+            speed = self.max_speed
         else:
-            # 在减速区外，保持全速
-            speed = self.current_speed
-        # 3. 【核心修正】使用比例导航制导律计算转弯角速度
-        # 计算视线角（即期望的航向）
+            # 在舒适区和最大加速区之间，速度进行线性插值
+            # 距离越远，速度越快
+            ratio = (distance_to_target - COMFORT_RADIUS) / (MAX_BOOST_RADIUS - COMFORT_RADIUS)
+            speed = leader_speed + ratio * (self.max_speed - leader_speed)
+        
+        # 确保速度不超过最大值
+        speed = min(speed, self.max_speed)
+        
+        # 3. 比例导航制导律计算转弯（这部分逻辑是正确的，保持不变）
         desired_heading = np.arctan2(vector_to_target[1], vector_to_target[0])
+        heading_error = (desired_heading - self.heading + np.pi) % (2 * np.pi) - np.pi
         
-        # 计算视线角与当前航向的误差
-        heading_error = desired_heading - self.heading
-        # 将误差归一化到 [-pi, pi]
-        heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
-        
-        # 导航增益K，这是一个关键的可调参数。K=4通常效果不错。
-        PROPORTIONAL_GAIN = 4.0 
+        PROPORTIONAL_GAIN = 4.0
         desired_turn_rate = PROPORTIONAL_GAIN * heading_error
         
-        # 4. 施加物理约束（最大转弯角速度）
-        # omega_max = v / R
         max_turn_rate = speed / self.turn_radius if self.turn_radius > 0 else float('inf')
         turn_rate = np.clip(desired_turn_rate, -max_turn_rate, max_turn_rate)
         
-        # 5. 更新无人机的状态（位置和航向）
+        # 4. 更新无人机状态
         self.heading += turn_rate * dt
-        # 归一化航向
         self.heading = (self.heading + np.pi) % (2 * np.pi) - np.pi
+        
         self.position[0] += speed * np.cos(self.heading) * dt
         self.position[1] += speed * np.sin(self.heading) * dt
         
-        # 更新速度向量
-        self.velocity = np.array([
-            speed * np.cos(self.heading),
-            speed * np.sin(self.heading),
-            0.0
-        ])
+        self.velocity = np.array([speed * np.cos(self.heading), speed * np.sin(self.heading), 0.0])
     
-    # ==================== 其余方法 ====================
     def set_speed_multiplier(self, multiplier: float):
         self.speed_multiplier = max(0.1, multiplier)
-
     def activate(self):
-        if self.fuel > 0:
-            self.status = UAVStatus.ACTIVE
-    
+        if self.fuel > 0: self.status = UAVStatus.ACTIVE
     def destroy(self):
         self.status = UAVStatus.DESTROYED
         self.velocity = np.array([0.0, 0.0, 0.0])
-    
-    def get_position_for_simulation(self) -> Tuple[float, float, float]:
-        return tuple(self.position)
-    
     def __str__(self):
         role = "Leader" if self.is_leader else "Follower"
         progress = ""
         if self.is_leader:
-            progress = f"progress={self.current_path_index}/{len(self.planned_path)}"
+            progress = f"path {self.current_path_index}/{len(self.planned_path)}" if self.planned_path else "no path"
         else:
-            if self.formation_target_pos is not None:
-                dist = np.linalg.norm(self.position[:2] - self.formation_target_pos[:2])
-                progress = f"target_dist={dist:.1f}m"
-            else:
-                progress = "no target"
+            dist = np.linalg.norm(self.position[:2] - self.leader.position[:2]) if self.leader else float('inf')
+            progress = f"dist_to_leader={dist:.1f}m"
         return f"UAV-{self.id} ({role}): pos=({self.position[0]:.1f},{self.position[1]:.1f}), {progress}, status={self.status.value}"
 
-# ==================== 测试代码 ====================
+# ==================== 测试代码 (已同步修改) ====================
 class SimpleDubinsPlanner:
     def plan(self, q0, q1, turning_radius, step_size):
         try:
@@ -270,9 +230,8 @@ class SimpleDubinsPlanner:
             configurations, _ = path.sample_many(step_size)
             return configurations, _
         except ImportError:
-            print("Error: 'dubins' library not found. Please install it using 'pip install dubins'.")
+            print("Error: 'dubins' library not found. Please install it with 'pip install dubins'.")
             return [], None
-
 class MockPathPlanner:
     def __init__(self):
         self.dubins_planner = SimpleDubinsPlanner()
@@ -280,14 +239,16 @@ class MockPathPlanner:
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    # 创建一个领航者和两个跟随者
     leader = UAV(uav_id=1, initial_position=(0, 0, 100), initial_heading=np.pi/4)
     follower1 = UAV(uav_id=2, initial_position=(-50, 50, 100), initial_heading=np.pi/4)
     follower2 = UAV(uav_id=3, initial_position=(50, -50, 100), initial_heading=np.pi/4)
 
+    # === 【修改点 4】: 使用新的方式设置跟随者 ===
     leader.set_as_leader()
-    follower1.set_as_follower()
-    follower2.set_as_follower()
+    # 定义队形偏移量：(dx, dy)
+    # 领航者在(0,0)，前方是Y轴正向，右方是X轴正向
+    follower1.set_as_follower(leader=leader, offset=(-20, 20)) # 左后方
+    follower2.set_as_follower(leader=leader, offset=(20, -20))  # 右后方
 
     mock_planner = MockPathPlanner()
     leader.set_path_planner(mock_planner)
@@ -300,26 +261,12 @@ if __name__ == "__main__":
     leader.set_waypoints(waypoints)
     
     dt = 0.1
+    # === 【修改点 5】: 仿真循环变得极其简单 ===
     for i in range(1500):
+        # 只需要按顺序更新每个无人机即可
         leader.update_position(dt)
-
-        leader_pos = leader.position
-        leader_heading = leader.heading
-        
-        dx1, dy1 = -50, -50 # 跟随者1的相对位置
-        offset1_x = dx1 * np.cos(leader_heading) - dy1 * np.sin(leader_heading)
-        offset1_y = dx1 * np.sin(leader_heading) + dy1 * np.cos(leader_heading)
-        target1_pos = (leader_pos[0] + offset1_x, leader_pos[1] + offset1_y, leader_pos[2])
-        follower1.set_formation_target(target1_pos, leader_heading)
-        
-        dx2, dy2 = 50, -50 # 跟随者2的相对位置
-        offset2_x = dx2 * np.cos(leader_heading) - dy2 * np.sin(leader_heading)
-        offset2_y = dx2 * np.sin(leader_heading) + dy2 * np.cos(leader_heading)
-        target2_pos = (leader_pos[0] + offset2_x, leader_pos[1] + offset2_y, leader_pos[2])
-        follower2.set_formation_target(target2_pos, leader_heading)
-        
-        follower1.update_position(dt)
-        follower2.update_position(dt)
+        follower1.update_position(dt) # follower1内部会自动计算目标并飞过去
+        follower2.update_position(dt) # follower2内部会自动计算目标并飞过去
         
         if i % 100 == 0:
             print(f"--- Step {i} ---")
@@ -331,29 +278,19 @@ if __name__ == "__main__":
             print(f"\nLeader has completed the path at step {i}.")
             break
             
-    # 绘图
+    # 绘图部分保持不变
     plt.figure(figsize=(12, 12))
     history_leader = np.array(leader.position_history)
     history_f1 = np.array(follower1.position_history)
     history_f2 = np.array(follower2.position_history)
-    
     plt.plot(history_leader[:, 0], history_leader[:, 1], 'r-', linewidth=2, label='Leader Trajectory')
     plt.plot(history_f1[:, 0], history_f1[:, 1], 'g--', label='Follower 1 Trajectory')
     plt.plot(history_f2[:, 0], history_f2[:, 1], 'b--', label='Follower 2 Trajectory')
-    
     wp_array = np.array(waypoints)
     plt.plot(wp_array[:, 0], wp_array[:, 1], 'ko', markersize=10, label='Waypoints')
-
-    # 绘制队形快照
     for i in range(0, len(history_leader), 150):
         plt.plot([history_leader[i,0], history_f1[i,0]], [history_leader[i,1], history_f1[i,1]], 'k-', alpha=0.2)
         plt.plot([history_leader[i,0], history_f2[i,0]], [history_leader[i,1], history_f2[i,1]], 'k-', alpha=0.2)
         plt.plot([history_f1[i,0], history_f2[i,0]], [history_f1[i,1], history_f2[i,1]], 'k-', alpha=0.2)
-
-    plt.title('Leader-Follower Formation Simulation')
-    plt.xlabel('X (m)')
-    plt.ylabel('Y (m)')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')
-    plt.show()
+    plt.title('Leader-Follower Formation Simulation (Internal Follower Logic)')
+    plt.xlabel('X (m)'); plt.ylabel('Y (m)'); plt.legend(); plt.grid(True); plt.axis('equal'); plt.show()
