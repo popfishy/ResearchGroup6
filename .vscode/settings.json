@@ -8,5 +8,10 @@
     "/home/yjq/ResearchGroup6/devel/lib/python3/dist-packages",
     "/home/yjq/catkin_ws/devel/lib/python3/dist-packages",
     "/opt/ros/noetic/lib/python3/dist-packages"
+  ],
+  "cursorpyright.analysis.extraPaths": [
+    "/home/yjq/ResearchGroup6/devel/lib/python3/dist-packages",
+    "/home/yjq/catkin_ws/devel/lib/python3/dist-packages",
+    "/opt/ros/noetic/lib/python3/dist-packages"
   ]
 }

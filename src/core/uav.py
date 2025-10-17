@@ -21,7 +21,7 @@ class UAV:
         self.heading = initial_heading  # 初始航向角 (rad)
         self.status = UAVStatus.STANDBY
         self.fuel = 100.0
-        self.turn_radius = 100.0
+        self.turn_radius = 50.0
         self.max_speed = 0.0
         self.min_speed = 0.0
         self.current_speed = 0.0

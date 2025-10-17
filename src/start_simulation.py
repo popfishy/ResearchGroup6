@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import numpy as np
 import rospy
 from typing import List, Tuple, Optional, Any
@@ -18,17 +20,6 @@ from core.scenario_parser import ScenarioParser
 # from xfd_allocation.scripts.CBPA.lib.Region import Region
 # from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
 # from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
-
-
-# pos1-------------pos4
-#  |                |
-# pos2-------------pos3
-# RegionList: list = [
-#     Region(1, [8081, 0, 3752], [8081, 0, 2802], [9519, 0, 2802], [9519, 0, 3752]),
-#     Region(2, [6007, 0, 2908], [6007, 0, 1840], [7141, 0, 1840], [7141, 0, 2908]),
-#     Region(3, [7352, 0, 2745], [7352, 0, 1579], [8882, 0, 1579], [8882, 0, 2745]),
-#     Region(4, [7352, 0, 1532], [7352, 0, 120], [9145, 0, 120], [9145, 0, 1532]),
-# ]
 
 
 O1_recognition_efficiency: float = None
@@ -94,7 +85,6 @@ class SwarmMissionManager:
     
     def _initialize_formations(self):
         """初始化队形配置"""
-        # 5x5正方形队形
         square_5x5_positions = []
         spacing = 100.0
         for i in range(5):
@@ -580,9 +570,6 @@ class SwarmMissionManager:
         except Exception as e:
             print(f"任务执行失败: {e}")
             self._emergency_abort()
-    
-    # TODO:可能需要修改
-    # start_simulation.py
 
     def _wait_for_phase_completion(self, phase_name: str, max_steps=5000, dt=0.1):
         """等待阶段完成"""
@@ -642,7 +629,6 @@ class SwarmMissionManager:
         duration = time.time() - start_time
         print(f"警告: {phase_name} 阶段在达到最大步数 {max_steps} 未完成。耗时: {duration:.2f}s")
 
-    
     def _emergency_abort(self):
         """紧急中止任务"""
         print("执行紧急中止程序...")
@@ -723,17 +709,18 @@ class SwarmMissionManager:
         # 为每个无人机创建线条(轨迹)和点(当前位置)对象
         # 使用字典来方便地通过 uav_id 访问
         uav_plots = {}
-        colors = {1: 'r', 2: 'b'}
-        
-        for zone_id, zone_info in self.takeoff_zones.items():
-            color = colors.get(zone_id, 'gray')
-            for uav_id in zone_info["uav_ids"]:
+        colors = ['r', 'b', 'g', 'c', 'm', 'y']
+        group_ids = sorted(self.group_assignments.keys())
+
+        for i, group_id in enumerate(group_ids):
+            color = colors[i % len(colors)]
+            for uav_id in self.group_assignments[group_id]:
                 uav = self.uav_dict[uav_id]
                 # 创建一个空的轨迹线条和一个点
                 line, = ax.plot([], [], color=color, linestyle='--', linewidth=0.8)
                 point, = ax.plot(uav.position[0], uav.position[1], 'o', color=color, markersize=4)
                 uav_plots[uav_id] = {'line': line, 'point': point, 'is_leader': uav.is_leader}
-        
+
         # 为领航员的轨迹设置更粗的线条
         for uav_id, plot_L_info in uav_plots.items():
             if plot_L_info['is_leader']:
@@ -840,16 +827,40 @@ if __name__ == "__main__":
         uav.activate()
 
     # --- 4. 执行准备阶段 ---
-    # 此函数内部包含路径规划、角色设置和仿真循环
-    mission_manager.execute_preparation_phase()
+    # 此函数内部包含路径规划、角色设置
+    # mission_manager.execute_preparation_phase()
+    print("开始准备阶段：规划无人机集结路径...")
+    mission_manager.current_phase = MissionType.PREPARATION
+    mission_manager.phase_start_time = time.time()
     
+    # 动态地为每个从XML加载的编队规划集结路径
+    assigned_groups = set()
+    for area in mission_manager.reconnaissance_areas:
+        if not area.assigned_uavs: continue
+        
+        # 找到这组UAV属于哪个编队
+        group_id_found = None
+        for gid, uids in mission_manager.group_assignments.items():
+            if area.assigned_uavs[0] in uids: # 检查第一个UAV的归属
+                group_id_found = gid
+                break
+        
+        if group_id_found and group_id_found not in assigned_groups:
+            rally_point = mission_manager._calculate_rally_point(area)
+            # 调用重写后的函数，注意参数变化
+            mission_manager._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+            assigned_groups.add(group_id_found)
+
+    # --- 5. 动态可视化准备阶段 ---
+    mission_manager.animate_preparation_phase()
+
     print("仿真流程结束。")
 
-    # --- 5. 监控与可视化 ---
+    # --- 6. 监控 ---
     status = mission_manager.get_mission_status()
     print(f"\n最终任务状态: {status}")
-    print("生成轨迹图...")
-    mission_manager.plot_results()
+    # print("生成轨迹图...")
+    # mission_manager.plot_results()
 
 
 
