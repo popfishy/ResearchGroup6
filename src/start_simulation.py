@@ -2,10 +2,22 @@ import numpy as np
 import rospy
 from typing import List, Tuple, Optional, Any
 import math
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 from core.utils import *
 from core.uav import UAV
 from core.path_planner import PathPlanner
+from core.scenario_parser import ScenarioParser
+
+# TODO: 任务分配
+# import random
+# from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
+# from xfd_allocation.scripts.CBPA.lib.Robot import Robot
+# from xfd_allocation.scripts.CBPA.lib.Task import Task
+# from xfd_allocation.scripts.CBPA.lib.Region import Region
+# from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
+# from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 
 
 # pos1-------------pos4
@@ -45,14 +57,16 @@ class SwarmMissionManager:
         self.mission_start_time = time.time()
         
         # 无人机管理
-        self.uav_dict = {}  # ID -> UAV对象
-        self.group_assignments = {}  # group_id -> [uav_ids]
+        self.uav_dict: Dict[int, UAV] = {}  # ID -> UAV对象
+        self.group_assignments: Dict[int, List[int]] = {}  # group_id -> [uav_ids]
         
         # 起飞区域配置
-        self.takeoff_zones = {
-            1: {"center": (0, 0, 0), "uav_ids": list(range(1, 26))},      # 区域1: UAV 1-25
-            2: {"center": (2000, 0, 0), "uav_ids": list(range(26, 51))}   # 区域2: UAV 26-50
-        }
+        # self.takeoff_zones = {
+        #     1: {"center": (0, 0, 0), "uav_ids": list(range(1, 26))},      # 区域1: UAV 1-25
+        #     2: {"center": (2000, 0, 0), "uav_ids": list(range(26, 51))}   # 区域2: UAV 26-50
+        # }
+
+        self.takeoff_zones = {}
         
         # 队形配置
         self.formation_configs = {}
@@ -72,9 +86,7 @@ class SwarmMissionManager:
         }
         
         # 外部接口
-        self.dubins_planner = None
-        self.coverage_planner = None  # region2cover库
-        self.patrol_planner = None
+        self.path_planner: Optional[PathPlanner] = None
         self.simulation_interface = None  # 仿真接口
         
         # 初始化任务
@@ -128,7 +140,7 @@ class SwarmMissionManager:
         self.containment_zones = [
             ContainmentZone(
                 id=1,
-                center=(2000, 2000, 150),  # 需要您提供具体坐标
+                center=(4000, 4000, 100),  # 需要您提供具体坐标
                 radius=800,
                 patrol_altitude=150,
                 patrol_speed=25,
@@ -141,60 +153,68 @@ class SwarmMissionManager:
     
     def set_external_interfaces(self, dubins_planner=None, coverage_planner=None, 
                                patrol_planner=None, simulation_interface=None):
-        """设置外部接口"""
-        self.dubins_planner = dubins_planner
-        self.coverage_planner = coverage_planner
-        self.patrol_planner = patrol_planner
+        """
+        设置外部接口，并用它们来配置核心的PathPlanner。
+        """
+        # 使用传入的底层规划器来实例化或配置总的PathPlanner
+        if not self.path_planner:
+            self.path_planner = PathPlanner() # 确保PathPlanner对象存在
+        # 将具体的规划器实现注入到PathPlanner中
+        if dubins_planner:
+            self.path_planner.set_dubins_planner(dubins_planner)
+        if coverage_planner:
+            self.path_planner.set_coverage_planner(coverage_planner) 
+        if patrol_planner:
+            self.path_planner.set_patrol_planner(patrol_planner)
         self.simulation_interface = simulation_interface
-    
-    def initialize_uavs_from_simulation(self):
-        """从仿真中读取无人机信息并初始化"""
-        if not self.simulation_interface:
-            print("警告: 仿真接口未设置，使用默认初始化")
-            self._initialize_uavs_default()
-            return
-        
+        print("外部接口设置完毕，PathPlanner已配置。")
+
+    # TODO:也可以提前设置好pathplanner，一步到位
+    def set_path_planner(self, path_planner: PathPlanner):
+        """设置路径规划器接口"""
+        self.path_planner = path_planner
+
+    def initialize_uavs_from_xml(self, xml_path: str):
+        """【新增】从XML文件加载并初始化所有无人机和敌方目标"""
+        print(f"--- 从 {xml_path} 加载场景 ---")
         try:
-            # TODO: 从仿真接口读取无人机信息
-            uav_data = self.simulation_interface.get_all_uav_status()
-            
-            for uav_info in uav_data:
-                uav_id = uav_info['id']
-                position = uav_info['position']
-                # 创建UAV对象并添加到字典
-                # self.uav_dict[uav_id] = UAV(uav_id, position)
-                
+            parser = ScenarioParser(xml_path)
+            scenario_data = parser.parse()
+        except FileNotFoundError:
+            print(f"错误: 场景文件 '{xml_path}' 未找到。无法初始化。")
+            return False
         except Exception as e:
-            print(f"从仿真读取无人机信息失败: {e}")
-            self._initialize_uavs_default()
-    
-    def _initialize_uavs_default(self):
-        """默认无人机初始化（用于测试）"""
-        for zone_id, zone_info in self.takeoff_zones.items():
-            center = zone_info["center"]
-            uav_ids = zone_info["uav_ids"]
-            
-            # 在起飞区域周围分布无人机
-            formation = self.formation_configs["square_5x5"]
-            for i, uav_id in enumerate(uav_ids):
-                if i < len(formation.positions):
-                    offset = formation.positions[i]
-                    position = (
-                        center[0] + offset[0],
-                        center[1] + offset[1],
-                        center[2]
-                    )
-                else:
-                    # 超出队形的无人机随机分布
-                    position = (
-                        center[0] + np.random.uniform(-200, 200),
-                        center[1] + np.random.uniform(-200, 200),
-                        center[2]
-                    )
-                
-                # TODO: 创建UAV对象
-                self.uav_dict[uav_id] = UAV(uav_id, position)
-                print(f"初始化 UAV-{uav_id} 在位置 {position}")
+            print(f"解析XML文件时发生错误: {e}")
+            return False
+
+        uavs = scenario_data.get('uavs', [])
+        if not uavs:
+            print("错误: XML文件中未找到可用的我方无人机！")
+            return False
+
+        # 1. 填充无人机字典
+        self.uav_dict = {uav.id: uav for uav in uavs}
+        print(f"成功加载 {len(self.uav_dict)} 架无人机。")
+
+        # 2. 填充敌方目标列表
+        self.attack_targets = scenario_data.get('enemies', [])
+        print(f"成功加载 {len(self.attack_targets)} 个敌方目标。")
+
+        # 3. 动态配置编队信息
+        self.group_assignments = scenario_data.get('uav_groups', {})
+        self.total_uavs = len(self.uav_dict)
+        print(f"识别出 {len(self.group_assignments)} 个无人机编队。")
+
+        # 4. 动态分配侦察任务给编队
+        # 简单策略：按编队ID从小到大，依次分配侦察区
+        group_ids = sorted(self.group_assignments.keys())
+        for i, area in enumerate(self.reconnaissance_areas):
+            if i < len(group_ids):
+                group_id = group_ids[i]
+                area.assigned_uavs = self.group_assignments[group_id]
+                print(f"编队 {group_id} (共 {len(area.assigned_uavs)} 架) 分配给侦察区域 {area.id}")
+        return True
+
     
     # ==================== 阶段1: 准备阶段 ====================
     def execute_preparation_phase(self):
@@ -203,22 +223,30 @@ class SwarmMissionManager:
         self.current_phase = MissionType.PREPARATION
         self.phase_start_time = time.time()
         
-        # 为每个起飞区域的无人机规划到侦查区域的集结路径
-        for zone_id, zone_info in self.takeoff_zones.items():
-            uav_ids = zone_info["uav_ids"]
-            target_area = self.reconnaissance_areas[zone_id - 1]  # 对应的侦查区域
+        # 动态地为每个从XML加载的编队规划集结路径
+        assigned_groups = set()
+        for area in self.reconnaissance_areas:
+            if not area.assigned_uavs: continue
             
-            # 计算集结点（侦查区域边缘）
-            rally_point = self._calculate_rally_point(target_area)
+            # 找到这组UAV属于哪个编队
+            group_id_found = None
+            for gid, uids in self.group_assignments.items():
+                if area.assigned_uavs[0] in uids: # 检查第一个UAV的归属
+                    group_id_found = gid
+                    break
             
-            # 为该组无人机规划队形移动路径
-            self._plan_group_formation_movement(uav_ids, rally_point, "square_5x5")
+            if group_id_found and group_id_found not in assigned_groups:
+                rally_point = self._calculate_rally_point(area)
+                # 调用重写后的函数，注意参数变化
+                self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+                assigned_groups.add(group_id_found)
         
-        # 等待所有无人机到达集结点
+        # 等待所有无人机到达集结点（内部是仿真循环）
         self._wait_for_phase_completion("preparation")
         
         print("准备阶段完成，所有无人机已集结")
         self.phase_completion[MissionType.PREPARATION] = True
+
     
     def _calculate_rally_point(self, target_area: TargetArea) -> Tuple[float, float, float]:
         """计算侦查区域的集结点"""
@@ -230,24 +258,48 @@ class SwarmMissionManager:
         rally_point = (center[0], center[1] - radius - 200, center[2])
         return rally_point
     
-    def _plan_group_formation_movement(self, uav_ids: List[int], target_point: Tuple[float, float, float], formation_name: str):
-        """为一组无人机规划队形移动"""
-        if not self.dubins_planner:
-            print("警告: Dubins规划器未设置")
-            return
+    def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str):
+        """
+        - 动态选择领航者。
+        - 根据初始位置计算并设置跟随者的相对偏移。
+        """
+        if not self.path_planner:
+            print("警告: PathPlanner 未设置"); return
+        uav_ids = self.group_assignments.get(group_id)
+        if not uav_ids:
+            print(f"警告: 编队 {group_id} 中没有无人机。"); return
+        # 1. 动态选择领航者 (例如，选择编队中ID最小的无人机)
+        leader_id = min(uav_ids)
+        leader_uav = self.uav_dict[leader_id]
         
-        formation = self.formation_configs[formation_name]
-        leader_id = uav_ids[formation.leader_index]
+        print(f"\n--- 为编队 {group_id} 设置移动任务 ---")
+        print(f"UAV-{leader_id} 被选为领航者。")
         
-        # 领机航路点
-        leader_waypoints = [target_point]
-        
-        # TODO: 调用PathPlanner.plan_formation_path()
-        # formation_result = self.path_planner.plan_formation_path(
-        #     leader_waypoints, formation, [self.uav_dict[uid] for uid in uav_ids], leader_id
-        # )
-        
-        print(f"为组 {uav_ids} 规划队形移动到 {target_point}")
+        # 2. 为领航者设置角色并规划路径
+        leader_uav.set_as_leader()
+        self.path_planner.plan_leader_path(leader_uav, [target_point])
+        # 3. 设置所有其他无人机为跟随者，并计算其相对领航者的初始偏移
+        follower_count = 0
+        leader_init_pos = leader_uav.init_global_position # 使用初始位置计算偏移
+        for uav_id in uav_ids:
+            if uav_id == leader_id:
+                continue
+            
+            follower_uav = self.uav_dict[uav_id]
+            follower_init_pos = follower_uav.init_global_position
+            
+            # 计算初始的相对偏移 (X, Y)，这将是他们在飞行中保持的队形
+            relative_offset = (
+                follower_init_pos[0] - leader_init_pos[0],
+                follower_init_pos[1] - leader_init_pos[1]
+            )
+            
+            # 设置跟随者角色，并告知其要跟随的领航者和自己的队形偏移
+            follower_uav.set_as_follower(leader=leader_uav, offset=relative_offset)
+            follower_count += 1
+            
+        print(f"{follower_count} 架无人机被设置为跟随者，将保持其初始相对位置。")
+           
     
     # ==================== 阶段2: 侦查阶段 ====================
     def execute_reconnaissance_phase(self):
@@ -529,15 +581,67 @@ class SwarmMissionManager:
             print(f"任务执行失败: {e}")
             self._emergency_abort()
     
-    def _wait_for_phase_completion(self, phase_name: str):
+    # TODO:可能需要修改
+    # start_simulation.py
+
+    def _wait_for_phase_completion(self, phase_name: str, max_steps=5000, dt=0.1):
         """等待阶段完成"""
-        print(f"等待{phase_name}阶段完成...")
+        print(f"开始运行仿真，等待 {phase_name} 阶段完成...")
         
-        # TODO: 实际实现中需要检查所有无人机的任务状态
-        # 这里使用简单的时间延迟模拟
-        time.sleep(1)
+        start_time = time.time()
+        for step in range(max_steps):
+            # 1. 【新增】为所有跟随者计算并更新其队形目标点
+            for uav in self.uav_dict.values():
+                if not uav.is_leader and uav.leader is not None:
+                    # 获取领航者的当前状态
+                    leader_pos = uav.leader.position
+                    leader_heading = uav.leader.heading
+                    
+                    # 获取该跟随者的队形偏移量
+                    offset_x = uav.formation_offset[0]
+                    offset_y = uav.formation_offset[1]
+                    
+                    # 在领航者的坐标系下进行旋转，计算出世界坐标系下的偏移
+                    rotated_offset_x = offset_x * np.cos(leader_heading) - offset_y * np.sin(leader_heading)
+                    rotated_offset_y = offset_x * np.sin(leader_heading) + offset_y * np.cos(leader_heading)
+                    
+                    # 计算最终的目标位置
+                    target_pos = (
+                        leader_pos[0] + rotated_offset_x,
+                        leader_pos[1] + rotated_offset_y,
+                        leader_pos[2]  # 假设高度与领航者一致
+                    )
+                    
+                    # 将计算出的目标点和航向设置给跟随者
+                    uav.set_formation_target(target_pos, leader_heading)
+
+            # 2. 更新所有无人机的位置
+            for uav in self.uav_dict.values():
+                if uav.status == UAVStatus.ACTIVE:
+                    uav.update_position(dt)
+                    
+            # 3. 检查所有领航者的路径是否完成 (这部分逻辑不变)
+            leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
+            if not leaders: 
+                print("警告: 未找到领航者来判断阶段完成状态。")
+                break
+            # 检查path_planning_complete确保路径已生成
+            active_leaders = [l for l in leaders if l.path_planning_complete]
+            if not active_leaders: # 如果没有领航者完成规划，则继续等待
+                 if step % 100 == 0:
+                      print("等待领航者路径规划完成...")
+                 continue
+
+            all_leaders_done = all(leader.is_path_complete for leader in active_leaders)
+            
+            if all_leaders_done:
+                duration = time.time() - start_time
+                print(f"{phase_name} 阶段完成！耗时: {duration:.2f}s, 仿真步数: {step}")
+                return
         
-        print(f"{phase_name}阶段完成")
+        duration = time.time() - start_time
+        print(f"警告: {phase_name} 阶段在达到最大步数 {max_steps} 未完成。耗时: {duration:.2f}s")
+
     
     def _emergency_abort(self):
         """紧急中止任务"""
@@ -559,23 +663,194 @@ class SwarmMissionManager:
             "detected_targets": len(self.attack_targets),
             "containment_zones": len(self.containment_zones)
         }
+    
+    def plot_results(self):
+        """可视化所有无人机和目标的轨迹/位置"""
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(16, 12))
+        
+        # 绘制无人机轨迹
+        colors = ['r', 'b', 'g', 'c', 'm', 'y']
+        group_ids = sorted(self.group_assignments.keys())
+        for i, group_id in enumerate(group_ids):
+            color = colors[i % len(colors)]
+            
+            for uav_id in self.group_assignments[group_id]:
+                uav = self.uav_dict[uav_id]
+                history = np.array(uav.position_history)
+                
+                if uav.is_leader:
+                    plt.plot(history[:, 0], history[:, 1], color=color, linewidth=2.5, label=f'Group {group_id} Leader')
+                else:
+                    plt.plot(history[:, 0], history[:, 1], color=color, linestyle='--', linewidth=1)
+
+        # 绘制敌方目标位置
+        if self.attack_targets:
+            enemy_pos = np.array([tgt.position for tgt in self.attack_targets])
+            plt.scatter(enemy_pos[:, 0], enemy_pos[:, 1], c='black', marker='x', s=100, label='Enemy Targets')
+
+        # 绘制集结点
+        for area in self.reconnaissance_areas:
+            rp = self._calculate_rally_point(area)
+            plt.plot(rp[0], rp[1], 'k*', markersize=15, mfc='yellow', label='Rally Point')
+
+        plt.title('Swarm Formation Simulation from XML Scenario')
+        plt.xlabel('East (m)')
+        plt.ylabel('North (m)')
+        plt.legend()
+        plt.grid(True)
+        plt.axis('equal')
+        plt.show()
+
+    def animate_preparation_phase(self, max_steps=5000, dt=0.1, interval=20):
+        """
+        通过动态动画来可视化和执行准备阶段。
+        这个函数会设置绘图，然后启动一个包含仿真循环的动画。
+        """
+        print("开始准备阶段的动态仿真与可视化...")
+        # 1. ======== 动画设置 ========
+        fig, ax = plt.subplots(figsize=(16, 12))
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_title('Swarm Mission: Preparation Phase')
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.grid(True)
+        # 绘制静态目标点
+        for area in self.reconnaissance_areas:
+            rp = self._calculate_rally_point(area)
+            ax.plot(rp[0], rp[1], 'kx', markersize=15, markeredgewidth=3, label='Rally Point')
+        # 2. ======== 初始化绘图元素 ========
+        # 为每个无人机创建线条(轨迹)和点(当前位置)对象
+        # 使用字典来方便地通过 uav_id 访问
+        uav_plots = {}
+        colors = {1: 'r', 2: 'b'}
+        
+        for zone_id, zone_info in self.takeoff_zones.items():
+            color = colors.get(zone_id, 'gray')
+            for uav_id in zone_info["uav_ids"]:
+                uav = self.uav_dict[uav_id]
+                # 创建一个空的轨迹线条和一个点
+                line, = ax.plot([], [], color=color, linestyle='--', linewidth=0.8)
+                point, = ax.plot(uav.position[0], uav.position[1], 'o', color=color, markersize=4)
+                uav_plots[uav_id] = {'line': line, 'point': point, 'is_leader': uav.is_leader}
+        
+        # 为领航员的轨迹设置更粗的线条
+        for uav_id, plot_L_info in uav_plots.items():
+            if plot_L_info['is_leader']:
+                plot_L_info['line'].set_linewidth(2.0)
+                plot_L_info['line'].set_linestyle('-')
+
+        # 添加一个显示时间的文本
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+        # 自动调整坐标轴范围
+        ax.autoscale_view()
+        ax.legend()
+        # 3. ======== 定义动画更新函数 ========
+        # 这是 FuncAnimation 在每一帧都会调用的核心函数
+        def update(frame):
+            # --- a. 仿真逻辑核心 ---
+            # 检查是否所有领航者都已到达目的地
+            leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
+            if leaders and all(l.is_path_complete for l in leaders):
+                # 如果任务完成，可以选择停止动画，但这里我们让它继续运行完
+                pass
+            # 为所有跟随者计算并更新其队形目标点
+            for uav in self.uav_dict.values():
+                if not uav.is_leader and uav.leader is not None:
+                    leader_pos = uav.leader.position
+                    leader_heading = uav.leader.heading
+                    offset_x, offset_y = uav.formation_offset[0], uav.formation_offset[1]
+                    
+                    rotated_offset_x = offset_x * np.cos(leader_heading) - offset_y * np.sin(leader_heading)
+                    rotated_offset_y = offset_x * np.sin(leader_heading) + offset_y * np.cos(leader_heading)
+                    
+                    target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
+                    uav.set_formation_target(target_pos, leader_heading)
+            # 更新所有无人机的位置
+            for uav in self.uav_dict.values():
+                if uav.status == UAVStatus.ACTIVE:
+                    uav.update_position(dt)
+            
+            # --- b. 更新绘图元素 ---
+            artists = []
+            for uav_id, uav in self.uav_dict.items():
+                plots = uav_plots[uav_id]
+                history = np.array(uav.position_history)
+                
+                # 更新轨迹
+                plots['line'].set_data(history[:, 0], history[:, 1])
+                
+                # 更新当前位置点
+                plots['point'].set_data(uav.position[0], uav.position[1])
+                
+                artists.append(plots['line'])
+                artists.append(plots['point'])
+            # 更新时间文本
+            time_text.set_text(f'Time: {frame * dt:.1f}s')
+            artists.append(time_text)
+            # 动态调整视图
+            if frame % 50 == 0:
+                ax.relim()
+                ax.autoscale_view()
+            
+            return artists
+        # 4. ======== 创建并启动动画 ========
+        # FuncAnimation 会自动调用 update 函数
+        ani = animation.FuncAnimation(
+            fig, update, frames=max_steps,
+            interval=interval, blit=True, repeat=False
+        )
+        plt.show() # 显示动画窗口
+        print("准备阶段动画播放完毕。")
+        self.phase_completion[MissionType.PREPARATION] = True
+
 # ==================== 使用示例 ====================
 if __name__ == "__main__":
-    # 创建任务管理器
+    # 为独立运行此文件而创建的 Mock Planner
+    class SimpleDubinsPlanner:
+        def plan(self, q0, q1, turning_radius, step_size):
+            try:
+                import dubins
+                path = dubins.shortest_path(q0, q1, turning_radius)
+                configurations, _ = path.sample_many(step_size)
+                return configurations, _
+            except ImportError:
+                print("错误: 'dubins' 库未找到. 请运行 'pip install dubins'.")
+                return [], None
+
+    # --- 1. 初始化 ---
     mission_manager = SwarmMissionManager()
     
-    # TODO: 设置外部接口
-    # mission_manager.set_external_interfaces(
-    #     dubins_planner=your_dubins_planner,
-    #     coverage_planner=your_region2cover_planner,
-    #     patrol_planner=your_patrol_planner,
-    #     simulation_interface=your_simulation_interface
-    # )
+    # --- 2. 设置外部接口 (使用 Mock Planner) ---
+    path_planner = PathPlanner(dubins_planner=SimpleDubinsPlanner())
+    # mission_manager.set_external_interfaces(path_planner) # 修正：函数名已改变
+    mission_manager.set_path_planner(path_planner)
     
-    # 启动任务
-    mission_manager.start_mission()
+    print("=== 开始无人机集群任务仿真（从XML加载） ===")
     
-    # 监控任务状态
+    # --- 3. 从XML文件初始化场景 ---
+    # 这个函数现在是启动的第一步
+    xml_file_path = '山地丛林.xml' # 确保XML文件与脚本在同一目录或提供正确路径
+    if not mission_manager.initialize_uavs_from_xml(xml_file_path):
+        print("场景初始化失败，程序退出。")
+        exit()
+        
+    # 激活所有已加载的无人机
+    for uav in mission_manager.uav_dict.values():
+        uav.activate()
+
+    # --- 4. 执行准备阶段 ---
+    # 此函数内部包含路径规划、角色设置和仿真循环
+    mission_manager.execute_preparation_phase()
+    
+    print("仿真流程结束。")
+
+    # --- 5. 监控与可视化 ---
     status = mission_manager.get_mission_status()
-    print(f"任务状态: {status}")
+    print(f"\n最终任务状态: {status}")
+    print("生成轨迹图...")
+    mission_manager.plot_results()
+
+
+
   

@@ -6,7 +6,7 @@ import numpy as np
 from enum import Enum
 from typing import List, Tuple, Optional
 import time
-from utils import *
+from .utils import *
 
 # 假设路径点之间的采样步长是固定的
 PATH_STEP_SIZE = 5.0 
@@ -22,9 +22,9 @@ class UAV:
         self.status = UAVStatus.STANDBY
         self.fuel = 100.0
         self.turn_radius = 100.0
-        self.max_speed = 40.0
-        self.min_speed = 15.0
-        self.current_speed = 30.0
+        self.max_speed = 0.0
+        self.min_speed = 0.0
+        self.current_speed = 0.0
         
         # 任务相关
         self.current_mission = MissionType.IDLE
@@ -33,13 +33,15 @@ class UAV:
         # 路径规划相关
         self.waypoints = []  # 原始航路点 (仅领航者使用)
         self.planned_path = []  # Dubins规划后的详细路径点 (仅领航者使用)
-        self.current_path_index = 0
+        self.current_path_index: int = 0
         self.path_planner = None  # 外部路径规划器接口
-        
+        self.path_index: int = 0
+
         # 编队控制相关属性
         self.is_leader = False
         self.formation_target_pos = None  # 跟随者的动态目标位置 [x, y, z]
         self.formation_target_heading = 0.0  # 跟随者的动态目标航向
+        self.leader = None
         
         # 倍速控制相关
         self.speed_multiplier = 1.0
@@ -54,16 +56,30 @@ class UAV:
         self.path_planner = path_planner
         
     # ==================== 编队角色控制方法 ====================
+    def set_speed_limits(self, min_speed:float, current_speed:float, max_speed:float):
+        self.max_speed = max_speed
+        self.current_speed = current_speed
+        self.min_speed = min_speed
+
     def set_as_leader(self):
         """将此无人机设置为领航者"""
         self.is_leader = True
         self.formation_target_pos = None
+        self.set_speed_limits(15, 30, 40)
 
-    def set_as_follower(self):
+    def unset_as_leader(self):
+        """取消领航者角色"""
+        self.is_leader = False
+
+    def set_as_follower(self, leader, offset: Tuple[float, float]):
         """将此无人机设置为跟随者"""
         self.is_leader = False
+        self.leader = leader
+        self.formation_offset = np.array(offset) # <--- 存储偏移量
         self.waypoints = []
         self.planned_path = []
+        self.set_speed_limits(15, 30, 60)
+        print(f"UAV-{self.id} set as follower of UAV-{leader.id} with offset {self.formation_offset}")
 
     def set_formation_target(self, target_pos: Tuple[float, float, float], target_heading: float):
         """为跟随者设置其动态的队形目标点"""
@@ -136,33 +152,43 @@ class UAV:
 
     def _update_leader_position(self, dt: float):
         """
-        【已修正】领航者沿预设路径飞行。
-        通过计算dt内应前进的步数来更新路径索引，确保前进。
+        【已修正】领航者沿着预先规划的路径移动。
+        在每个时间步 dt 内，从当前位置沿着路径移动 'speed * dt' 的距离。
         """
-        if not self.path_planning_complete or not self.planned_path or self.is_path_complete:
+        if not self.path_planning_complete or self.is_path_complete:
+            self.velocity = np.array([0.0, 0.0, 0.0])
             return
+        distance_to_move = self.current_speed * dt
         
-        # 1. 计算在dt时间内应飞行的距离
-        distance_to_travel = self.current_speed * dt
-        
-        # 2. 根据路径采样步长，计算应前进的路径点数量
-        # 确保至少前进一步，以避免速度过慢时卡住
-        num_steps_to_advance = max(1, round(distance_to_travel / PATH_STEP_SIZE))
-        
-        # 3. 更新路径索引
-        self.current_path_index += num_steps_to_advance
-        
-        # 4. 检查是否到达或超过终点
-        if self.current_path_index >= len(self.planned_path) - 1:
-            self.current_path_index = len(self.planned_path) - 1
-            self.is_path_complete = True
+        while distance_to_move > 0 and not self.is_path_complete:
+            if self.path_index >= len(self.planned_path) - 1:
+                self.is_path_complete = True
+                self.velocity = np.array([0.0, 0.0, 0.0])
+                self.position[:2] = self.planned_path[-1][:2]
+                break
+            p_start_current = self.position[:2]
+            p_end_target = self.planned_path[self.path_index][:2]
             
-        # 5. 更新无人机状态到新的路径点
-        new_point = self.planned_path[self.current_path_index]
-        self.position[0], self.position[1] = new_point[0], new_point[1]
-        self.heading = new_point[2]
+            vector_to_target = p_end_target - p_start_current
+            distance_to_target = np.linalg.norm(vector_to_target)
+            if distance_to_target < 0.01:
+                self.path_index += 1
+                continue
+            if distance_to_move >= distance_to_target:
+                self.position[:2] = p_end_target
+                distance_to_move -= distance_to_target
+                self.path_index += 1
+            else:
+                move_vector = (vector_to_target / distance_to_target) * distance_to_move
+                self.position[:2] += move_vector
+                distance_to_move = 0
         
-        # 更新速度向量
+        if not self.is_path_complete:
+            next_target = self.planned_path[self.path_index][:2]
+            vector_to_next_target = next_target - self.position[:2]
+            if np.linalg.norm(vector_to_next_target) > 0.1:
+                self.heading = np.arctan2(vector_to_next_target[1], vector_to_next_target[0])
+        
         self.velocity = np.array([
             self.current_speed * np.cos(self.heading),
             self.current_speed * np.sin(self.heading),
@@ -171,7 +197,6 @@ class UAV:
         
     def _update_follower_position(self, dt: float):
         """
-        【已修正】跟随者飞向其动态目标点。
         使用比例导航制导律和一个更平滑的速度控制器，以实现稳定追踪。
         """
         if self.formation_target_pos is None:

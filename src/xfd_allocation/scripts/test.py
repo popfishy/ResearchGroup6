@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import rospy
 import random
-from XFD_allocation.srv import TaskAllocation, TaskAllocationResponse
-from XFD_allocation.msg import LS
+from xfd_allocation.srv import TaskAllocation, TaskAllocationResponse
+from xfd_allocation.msg import LS
 from CBPA.lib.CBPA_REC import CBPA_REC  # 导入你的CBPA求解器类
 from CBPA.lib.WorldInfo import WorldInfo  # 导入你的世界信息类
 from CBPA.lib.Robot import Robot

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(XFD_allocation)
+project(xfd_allocation)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -11,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   rospy
   std_msgs
-  group6_interface
+  group6_interfaces
 )
 
 ## System dependencies are found with CMake's conventions
@@ -105,7 +105,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES XFD_allocation
+#  LIBRARIES xfd_allocation
 #  CATKIN_DEPENDS message_generation rospy std_msgs
 #  DEPENDS system_lib
 )
@@ -123,7 +123,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/XFD_allocation.cpp
+#   src/${PROJECT_NAME}/xfd_allocation.cpp
 # )
 
 ## Add cmake target dependencies of the library
@@ -134,7 +134,7 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/XFD_allocation_node.cpp)
+# add_executable(${PROJECT_NAME}_node src/xfd_allocation_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -203,7 +203,7 @@ catkin_install_python(PROGRAMS
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_XFD_allocation.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_xfd_allocation.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

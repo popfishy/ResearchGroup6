@@ -95,6 +95,19 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 
 
 
+```
+
+# 连接大屏幕的命令
+roslaunch rosbridge_server rosbridge_websocket.launch
+
+rosrun rosbridge_server rosbridge_websocket.py
+
+# 中电普信通信
+rosrun rosserial_server socket_node
+```
+
+
+
 
 
 

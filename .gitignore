@@ -185,3 +185,6 @@ models*
 
 *.AppImage
 
+*__pycache__*
+
+
