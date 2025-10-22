@@ -4,33 +4,7 @@
 import socket
 import json
 import time
-import logging
 import numpy as np
-from datetime import datetime
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(f'tcp_client_comm_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-
-class NumpyEncoder(json.JSONEncoder):
-    """Custom JSON encoder for numpy data types."""
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
-
 
 class TCPClient:
     """A generic TCP client for sending and receiving JSON messages."""
@@ -52,32 +26,23 @@ class TCPClient:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(10.0)  # 10-second timeout for connection attempt
-            logger.info(f"Connecting to server at {self.host}:{self.port}...")
+            print(f"Connecting to server at {self.host}:{self.port}...")
             self.socket.connect((self.host, self.port))
             self.connected = True
-            logger.info("Successfully connected to the server.")
+            print("Successfully connected to the server.")
 
-            # TODO 发送标识信息
+            # 发送组标识信息
             group_id = "ResearchGroup6*"
-            logger.info(f"发送组标识: {group_id}")
+            print(f"发送组标识: {group_id}")
             group_id_bytes = group_id.encode('utf-8')
             self.socket.sendall(group_id_bytes)
             
             # 等待一小段时间确保标识发送完成
             time.sleep(0.1)
             
-            # 发送客户端信息
-            # client_info = {
-            #     "type": "client_info",
-            #     "client_ip": self.client_ip,
-            #     "timestamp": time.time(),
-            #     "message": "课题六算法客户端已连接"
-            # }
-            # self.send_message(client_info)
-
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to the server: {e}")
+            print(f"Failed to connect to the server: {e}")
             self.connected = False
             return False
 
@@ -87,9 +52,9 @@ class TCPClient:
         if self.socket:
             try:
                 self.socket.close()
-                logger.info("Disconnected from the server.")
+                print("Disconnected from the server.")
             except Exception as e:
-                logger.error(f"Error while disconnecting: {e}")
+                print(f"Error while disconnecting: {e}")
         self.socket = None
 
     def send_json(self, data: dict):
@@ -101,20 +66,19 @@ class TCPClient:
         :return: True if sending was successful, False otherwise.
         """
         if not self.connected or not self.socket:
-            logger.warning("Cannot send data: not connected to the server.")
+            print("Cannot send data: not connected to the server.")
             return False
         
         try:
-            # ensure_ascii=False
             message = json.dumps(data, ensure_ascii=False)
             if not message.endswith('*'):
                 message += '*'
             
             self.socket.sendall(message.encode('utf-8'))
-            logger.info(f"Sent message: {message[:100]}...")
+            print(f"Sent message: {message[:100]}...")
             return True
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
+            print(f"Failed to send message: {e}")
             self.connected = False  # Assume connection is lost on send error
             return False
 
@@ -133,16 +97,16 @@ class TCPClient:
             raw_data = self.socket.recv(4096)
             if not raw_data:
                 # Connection closed by the server
-                logger.warning("Connection closed by the server.")
+                print("Connection closed by the server.")
                 self.disconnect()
                 return []
 
             self.data_buffer += raw_data.decode('utf-8')
         except socket.timeout:
-            # This is expected when no new data is available
+            # Expected when no data is available
             return []
         except Exception as e:
-            logger.error(f"Failed to receive data: {e}")
+            print(f"Failed to receive data: {e}")
             self.disconnect()
             return []
 
@@ -159,16 +123,33 @@ class TCPClient:
                 try:
                     message_data = json.loads(part)
                     messages.append(message_data)
-                    logger.info(f"Received message: {part[:100]}...")
+                    print(f"Received message: {part[:100]}...")
                 except json.JSONDecodeError as e:
-                    logger.warning(f"JSON decode error for message part: '{part[:100]}...'. Error: {e}")
+                    print(f"JSON decode error for message part: '{part[:100]}...'. Error: {e}")
         
         return messages
 
 if __name__ == '__main__':
     # Example usage
-    # This block will only run when the script is executed directly
-    # In a real application, you would import the TCPClient class.
-    
-    SERVER_HOST = '10.66.1.93'  # Change to your server's IP
+    SERVER_HOST = '10.66.1.93'  # Change to your server's IP  
     SERVER_PORT = 13334         # Change to your server's port
+    CLIENT_IP = '127.0.0.1'     # Replace with actual client IP if needed
+
+    client = TCPClient(SERVER_HOST, SERVER_PORT, CLIENT_IP)
+    if client.connect():
+        try:
+            # Example: send a test message
+            test_msg = {"cmd": "status_request", "from": CLIENT_IP}
+            client.send_json(test_msg)
+
+            # Listen for incoming messages for 10 seconds
+            start_time = time.time()
+            while time.time() - start_time < 10:
+                msgs = client.receive_json_messages()
+                for msg in msgs:
+                    print("Parsed message:", msg)
+                time.sleep(0.01)  # Small delay to avoid busy loop
+        finally:
+            client.disconnect()
+    else:
+        print("Could not connect to server.")

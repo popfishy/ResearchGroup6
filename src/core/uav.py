@@ -139,10 +139,10 @@ class UAV:
         else:
             self._update_follower_position(dt)
         
-        # --- 通用逻辑 ---
-        fuel_consumption_rate = 0.1
-        self.fuel -= fuel_consumption_rate * dt
-        self.fuel = max(0.0, self.fuel)
+        # 油量暂时不需要控制
+        # fuel_consumption_rate = 0.1
+        # self.fuel -= fuel_consumption_rate * dt
+        # self.fuel = max(0.0, self.fuel)
         
         self.position_history.append(self.position.copy())
         

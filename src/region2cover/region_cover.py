@@ -25,10 +25,10 @@ class RegionCover:
     def __init__(self, num_rows, num_cols, pos1, pos2, pos3, pos4, is_plot: bool = True):
         self.is_plot = is_plot
         self.all_path = []
-        self.x1, self.y1 = pos1[0], pos1[2]
-        self.x2, self.y2 = pos4[0], pos4[2]
-        self.x3, self.y3 = pos3[0], pos3[2]
-        self.x4, self.y4 = pos2[0], pos2[2]
+        self.x1, self.y1 = pos1[0], pos1[1]
+        self.x2, self.y2 = pos4[0], pos4[1]
+        self.x3, self.y3 = pos3[0], pos3[1]
+        self.x4, self.y4 = pos2[0], pos2[1]
         self.num_rows = num_rows
         self.num_cols = num_cols
         # TODO:计数使用，为了逻辑清晰加的无用变量
@@ -75,7 +75,7 @@ class RegionCover:
         self.all_path = []
 
         robot = f2c.Robot(2.0, cov_width)  # 宽度 覆盖宽度 最大曲率 最大曲率变化率
-        robot.setCruiseVel(41.7)  # 巡航速度
+        robot.setCruiseVel(30.0)  # 巡航速度
         robot.setMinTurningRadius(50)  # m
         robot.setMaxDiffCurv(0.1)  # 1/m^2 最大曲率变化率
 
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     # usage
     dis = 41.67 / 30
     region_cover = RegionCover(1, 1, [8081, 0, 3669], [8081, 0, 2636], [9519, 0, 2636], [9519, 0, 3669], is_plot=True)
-    region_cover.cover_run()
+    region_cover.cover_run(log_time='1')
     path_dubins_cc = region_cover.all_path[0]
     print("size:", path_dubins_cc.size())
     for i in range(path_dubins_cc.size() - 1):
@@ -140,31 +140,3 @@ if __name__ == "__main__":
         x = path_dubins_cc[i + 1].point.getX()
         if abs(last_x - x) > 10:
             print("i", i, "last_x", last_x, "x", x)
-        # if i > 5250 :
-        #     x = path_dubins_cc[i].point.getX()
-        #     y = path_dubins_cc[i].point.getZ() + 400
-        #     z = path_dubins_cc[i].point.getY()
-        #     print(" x, y, z angle:", x, y, z, path_dubins_cc[i].angle)
-
-    # for i in range(path_dubins_cc.size()):
-    #     path_state = path_dubins_cc[i]
-    #     x = path_state.point.getX()
-    #     y = path_state.point.getY()
-    #     z = path_state.point.getZ()
-    #     angle = path_state.angle
-    #     print(x, y, z, angle)
-
-# def path_state_to_pose_stamped(path_state, seq):
-#     pose_stamped = PoseStamped()
-#     pose_stamped.header.seq = seq
-#     pose_stamped.header.frame_id = 'map'
-#     pose_stamped.header.stamp = rospy.Time.now()
-#     pose_stamped.pose.position.x = path_state.point.getX()
-#     pose_stamped.pose.position.y = path_state.point.getY()
-#     pose_stamped.pose.position.z = path_state.point.getZ()
-#     quat = quaternion_from_euler(0, 0, path_state.angle)
-#     pose_stamped.pose.orientation.x = quat[0]
-#     pose_stamped.pose.orientation.y = quat[1]
-#     pose_stamped.pose.orientation.z = quat[2]
-#     pose_stamped.pose.orientation.w = quat[3]
-#     return pose_stamped
