@@ -15,6 +15,7 @@ from core.uav import UAV
 from core.path_planner import PathPlanner
 from core.scenario_parser import ScenarioParser
 from communication.scripts.tcp_client_communication import TCPClient
+from region2cover.region_cover import RegionCover
 
 # ==================== 全局配置 ====================
 # True:  运行本地Matplotlib可视化进行调试
@@ -81,6 +82,9 @@ class SwarmMissionManager:
             MissionType.CONTAINMENT: False
         }
         
+        # 区域覆盖规划器
+        self.region_cover_planner: Optional[RegionCover] = None
+
         # 外部接口
         self.path_planner: Optional[PathPlanner] = None
         self.simulation_interface = None  # 仿真接口
@@ -112,27 +116,55 @@ class SwarmMissionManager:
         # TODO: 添加其他需要的队形配置
     
     def _initialize_mission_areas(self):
-        """初始化任务区域 - 需要您补充具体区域信息"""
-        # TODO: 侦查区域示例,修改坐标
-        self.reconnaissance_areas = [
-            TargetArea(
-                id=1,
-                center=(1000, 1000, 100),  # 需要您提供具体坐标
-                radius=500,
-                priority=8,
-                area_type=ZoneType.SEARCH_AREA,
-                assigned_uavs=list(range(1, 26))  # 区域1的无人机
-            ),
-            TargetArea(
-                id=2,
-                center=(3000, 1000, 100),  # 需要您提供具体坐标
-                radius=500,
-                priority=8,
-                area_type=ZoneType.SEARCH_AREA,
-                assigned_uavs=list(range(26, 51))  # 区域2的无人机
-            )
-        ]
+        """初始化任务区域 - 根据给定范围生成覆盖路径和侦查区域"""
+        # 1. 定义总侦查区域的四个角点
+        # A(pos1) ------ B(pos4)
+        # |              |
+        # D(pos2) ------ C(pos3)
+        p1 = [4000, 0, 100]
+        p2 = [4000, -7000, 100]
+        p3 = [6500, -7000, 100]
+        p4 = [6500, 0, 100]
+
+        # 2. 初始化RegionCover并生成覆盖路径
+        # 假设有4个无人机群，我们将区域划分为2x2=4个子区域
+        num_groups = 4
+        self.region_cover_planner = RegionCover(num_rows=2, num_cols=2, 
+                                                pos1=p1, pos2=p2, pos3=p3, pos4=p4, 
+                                                is_plot=False) # 在仿真中通常不绘图
         
+        # 运行覆盖算法以生成所有子区域的路径
+        # TODO: 调整覆盖宽度等参数
+        self.region_cover_planner.cover_run(log_time='sim_run', cov_width=200)
+
+        # 3. 基于分割的区域和生成的路径来创建TargetArea对象
+        sub_regions = self.region_cover_planner.divide_regions()
+        if len(sub_regions) != num_groups:
+            print(f"警告: 区域分割数量({len(sub_regions)})与预期无人机群数({num_groups})不符。")
+            return
+
+        self.reconnaissance_areas = []
+        for i, region_corners in enumerate(sub_regions):
+            # 计算区域中心点
+            center_x = (region_corners[0][0] + region_corners[2][0]) / 2.0
+            center_y = (region_corners[0][1] + region_corners[2][1]) / 2.0
+            
+            # 计算区域“半径”（对角线的一半）
+            diag_dist = math.sqrt((region_corners[0][0] - region_corners[2][0])**2 + 
+                                  (region_corners[0][1] - region_corners[2][1])**2)
+            radius = diag_dist / 2.0
+
+            area = TargetArea(
+                id=i + 1,
+                center=(center_x, center_y, 100), # 假设侦查高度为100m
+                radius=radius,
+                priority=8,
+                area_type=ZoneType.SEARCH_AREA,
+                assigned_uavs=[]
+            )
+            self.reconnaissance_areas.append(area)
+            print(f"创建侦查区域 {area.id}: 中心({center_x:.0f}, {center_y:.0f}), 半径 {radius:.0f}")
+
         # TODO：封控区域示例，修改坐标
         self.containment_zones = [
             ContainmentZone(
@@ -218,7 +250,7 @@ class SwarmMissionManager:
         return True
 
     
-    # ==================== 阶段1: 准备阶段 ====================
+    # ! ==================== 阶段1: 准备阶段 ====================
     def execute_preparation_phase(self):
         """执行准备阶段：集结到侦查区域起点"""
         print("开始准备阶段：无人机集结...")
@@ -250,14 +282,19 @@ class SwarmMissionManager:
         self.phase_completion[MissionType.PREPARATION] = True
 
     def _calculate_rally_point(self, target_area: TargetArea) -> Tuple[float, float, float]:
-        """计算侦查区域的集结点"""
-        # 在侦查区域边缘设置集结点
-        center = target_area.center
-        radius = target_area.radius
-        
-        # 简单示例：在区域南侧设置集结点
-        rally_point = (center[0], center[1] - radius - 200, center[2])
-        return rally_point
+        """【修改】直接使用区域覆盖路径的起点作为集结点"""
+        area_id = target_area.id
+        if self.region_cover_planner and area_id <= len(self.region_cover_planner.start_point_list):
+            start_point = self.region_cover_planner.start_point_list[area_id - 1]
+            rally_point = (start_point.point.getX(), start_point.point.getY(), 100.0) # 假设集结高度为100m
+            print(f"区域 {area_id} 的集结点设置为覆盖路径起点: ({rally_point[0]:.0f}, {rally_point[1]:.0f})")
+            return rally_point
+        else:
+            # Fallback: 如果路径不存在，则在区域南侧设置集结点
+            print(f"警告: 无法为区域 {area_id} 获取覆盖路径起点，使用备用集结点计算方法。")
+            center = target_area.center
+            radius = target_area.radius
+            return (center[0], center[1] - radius - 200, center[2])
     
     def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str):
         """
@@ -309,100 +346,65 @@ class SwarmMissionManager:
         self.current_phase = MissionType.RECONNAISSANCE
         self.phase_start_time = time.time()
         
+        # 在这个新流程中，路径已经在初始化阶段生成，此处只需分配
         for area in self.reconnaissance_areas:
-            assigned_uavs = area.assigned_uavs
+            if not area.assigned_uavs:
+                continue
             
-            # 使用region2cover库规划覆盖路径
-            coverage_paths = self._plan_area_coverage(area, assigned_uavs)
-            
-            # 分配路径给无人机
-            self._assign_coverage_paths(assigned_uavs, coverage_paths)
+            # 从region_cover_planner获取预先计算好的路径
+            path_index = area.id - 1
+            if self.region_cover_planner and path_index < len(self.region_cover_planner.all_path):
+                coverage_path_raw = self.region_cover_planner.all_path[path_index]
+                
+                # 转换路径格式为PathPoint列表
+                coverage_path = []
+                for p in coverage_path_raw:
+                    # 将每个点转换为 (x, y, z, heading) 的PathPoint
+                    # 注意：侦查高度需要统一
+                    point = PathPoint(p.point.getX(), p.point.getY(), area.center[2], p.heading)
+                    coverage_path.append(point)
+
+                # 将这条路径分配给区域内的所有无人机（领机执行，随从跟随）
+                self._assign_coverage_paths(area.assigned_uavs, coverage_path)
+            else:
+                print(f"警告: 找不到为区域 {area.id} 预计算的覆盖路径。")
         
-        # 执行侦查并检测目标
-        self._execute_reconnaissance_search()
-        
+        # 等待所有无人机完成其覆盖路径
+        self._wait_for_phase_completion("reconnaissance")
+
         print("侦查阶段完成")
         self.phase_completion[MissionType.RECONNAISSANCE] = True
     
-    def _plan_area_coverage(self, area: TargetArea, uav_ids: List[int]) -> List[List[PathPoint]]:
-        """规划区域覆盖路径"""
-        if not self.coverage_planner:
-            print("警告: 区域覆盖规划器未设置，使用简单网格模式")
-            return self._simple_grid_coverage(area, uav_ids)
+    def _assign_coverage_paths(self, uav_ids: List[int], path: List[PathPoint]):
+        """
+        将单条覆盖路径分配给一个无人机编队。
+        - 领航者将获得完整的路径。
+        - 跟随者将继续跟随领航者。
+        """
+        if not uav_ids: return
         
-        try:
-            # TODO: 调用region2cover库
-            # coverage_result = self.coverage_planner.plan_coverage(
-            #     area.center, area.radius, len(uav_ids)
-            # )
-            # return coverage_result.paths
-            
-            print(f"为区域 {area.id} 规划覆盖路径，分配给 {len(uav_ids)} 架无人机")
-            return self._simple_grid_coverage(area, uav_ids)
-            
-        except Exception as e:
-            print(f"覆盖路径规划失败: {e}")
-            return self._simple_grid_coverage(area, uav_ids)
-    
-    def _simple_grid_coverage(self, area: TargetArea, uav_ids: List[int]) -> List[List[PathPoint]]:
-        """简单网格覆盖模式（备用方案）"""
-        paths = []
-        center = area.center
-        radius = area.radius
-        num_uavs = len(uav_ids)
+        # 假设编队的领航者是已经设置好的
+        leader_uav = None
+        for uid in uav_ids:
+            uav = self.uav_dict.get(uid)
+            if uav and uav.is_leader:
+                leader_uav = uav
+                break
         
-        # 简单的平行线扫描模式
-        strip_width = 2 * radius / num_uavs
-        
-        for i in range(num_uavs):
-            path = []
-            y_offset = -radius + i * strip_width
-            
-            # 来回扫描
-            start_x = center[0] - radius
-            end_x = center[0] + radius
-            
-            if i % 2 == 0:  # 偶数行从左到右
-                path.append(PathPoint(start_x, center[1] + y_offset, center[2], 0))
-                path.append(PathPoint(end_x, center[1] + y_offset, center[2], math.pi))
-            else:  # 奇数行从右到左
-                path.append(PathPoint(end_x, center[1] + y_offset, center[2], math.pi))
-                path.append(PathPoint(start_x, center[1] + y_offset, center[2], 0))
-            
-            paths.append(path)
-        
-        return paths
-    
-    def _assign_coverage_paths(self, uav_ids: List[int], paths: List[List[PathPoint]]):
-        """分配覆盖路径给无人机"""
-        for i, uav_id in enumerate(uav_ids):
-            if i < len(paths):
-                # TODO: 将路径分配给对应的无人机
-                # self.uav_dict[uav_id].set_waypoints(paths[i])
-                print(f"为 UAV-{uav_id} 分配覆盖路径，包含 {len(paths[i])} 个路径点")
-    
-    def _execute_reconnaissance_search(self):
-        """执行侦查搜索并检测目标"""
-        print("执行侦查搜索...")
-        
-        # 模拟目标检测过程
-        detected_targets = []
-        
-        # TODO: 实际的目标检测逻辑
-        # 这里需要根据无人机传感器数据进行目标识别
-        
-        # 示例：模拟发现一些目标
-        sample_targets = [
-            EnemyTarget(1, (1200, 1200, 0), "vehicle", 3, TargetStatus.DETECTED),
-            EnemyTarget(2, (2800, 1100, 0), "building", 4, TargetStatus.DETECTED),
-        ]
-        
-        for target in sample_targets:
-            target.detection_time = time.time()
-            detected_targets.append(target)
-            print(f"检测到目标 {target.id}: {target.target_type} at {target.position}")
-        
-        self.attack_targets.extend(detected_targets)
+        if leader_uav:
+            # 将路径点列表转换为规划器可用的目标点列表
+            target_points = [(p.x, p.y, p.z) for p in path]
+            self.path_planner.plan_leader_path(leader_uav, target_points)
+            print(f"为领航者 UAV-{leader_uav.id} 分配了包含 {len(path)} 个点的覆盖路径。")
+        else:
+            # 如果找不到领航者，则分配给第一个无人机（备用逻辑）
+            leader_id = uav_ids[0]
+            leader_uav = self.uav_dict[leader_id]
+            leader_uav.set_as_leader() # 紧急设为领航者
+            # 将路径点列表转换为规划器可用的目标点列表
+            target_points = [(p.x, p.y, p.z) for p in path]
+            self.path_planner.plan_leader_path(leader_uav, target_points)
+            print(f"警告: 在编队中未找到预设领航者。已将 UAV-{leader_id} 设为领航者并分配覆盖路径。")
     
     # ==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
@@ -710,9 +712,6 @@ class SwarmMissionManager:
             "agents": agents_list
         }
 
-        # 保存JSON用于调试
-        self._save_data_to_json(destruction_payload, "communication/json/last_destruction_event.json")
-
         if self.tcp_client and self.tcp_client.connected:
             print("正在发送损毁信息...")
             self.tcp_client.send_json(destruction_payload)
@@ -790,9 +789,6 @@ class SwarmMissionManager:
             "agents": multi_path
         }
         
-        # 将最新数据保存到JSON文件
-        self._save_data_to_json(poses_data, "communication/json/ResearchGroup6ResultTest.json")
-
         # 2. 发送数据
         self.tcp_client.send_json(poses_data)
 
@@ -801,18 +797,6 @@ class SwarmMissionManager:
         if self.tcp_client and self.tcp_client.connected:
             print("Disconnecting TCP client...")
             self.tcp_client.disconnect()
-
-
-    def _save_data_to_json(self, data: Dict, filepath: str):
-        """将数据保存为JSON文件"""
-        try:
-            # 确保目录存在
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            json_str = json.dumps(data, indent=4)
-            with open(filepath, "w") as file:
-                file.write(json_str)
-        except Exception as e:
-            print(f"Error saving data to JSON file '{filepath}': {e}")
 
     def plot_results(self):
         """可视化所有无人机和目标的轨迹/位置"""
