@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 
+from re import T
 import numpy as np
-import rospy
-from typing import List, Tuple, Optional, Any
+import time
+from typing import List, Tuple, Optional, Any, Dict
 import math
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import json
+import os
 
 from core.utils import *
 from core.uav import UAV
 from core.path_planner import PathPlanner
 from core.scenario_parser import ScenarioParser
+from communication.scripts.tcp_client_communication import TCPClient
+
+# ==================== 全局配置 ====================
+# True:  运行本地Matplotlib可视化进行调试
+# False: 运行无图形界面的仿真，并通过TCP/IP发送数据
+VISUAL_DEBUG_MODE = True
+
 
 # TODO: 任务分配
 # import random
@@ -31,7 +41,7 @@ def on_press(key):
     global EXIT_PROGRAM
     try:
         if key.char == "q":  # 检测 'q' 键是否被按下
-            rospy.loginfo("退出程序中...")
+            print("退出程序中...")
             EXIT_PROGRAM = True
     except AttributeError:
         pass
@@ -52,11 +62,6 @@ class SwarmMissionManager:
         self.group_assignments: Dict[int, List[int]] = {}  # group_id -> [uav_ids]
         
         # 起飞区域配置
-        # self.takeoff_zones = {
-        #     1: {"center": (0, 0, 0), "uav_ids": list(range(1, 26))},      # 区域1: UAV 1-25
-        #     2: {"center": (2000, 0, 0), "uav_ids": list(range(26, 51))}   # 区域2: UAV 26-50
-        # }
-
         self.takeoff_zones = {}
         
         # 队形配置
@@ -79,6 +84,8 @@ class SwarmMissionManager:
         # 外部接口
         self.path_planner: Optional[PathPlanner] = None
         self.simulation_interface = None  # 仿真接口
+        self.tcp_client: Optional[TCPClient] = None
+        self.pos_converter = None
         
         # 初始化任务
         self._initialize_mission_areas()
@@ -170,6 +177,7 @@ class SwarmMissionManager:
         try:
             parser = ScenarioParser(xml_path)
             scenario_data = parser.parse()
+            self.pos_converter = parser.converter
         except FileNotFoundError:
             print(f"错误: 场景文件 '{xml_path}' 未找到。无法初始化。")
             return False
@@ -189,6 +197,10 @@ class SwarmMissionManager:
         # 2. 填充敌方目标列表
         self.attack_targets = scenario_data.get('enemies', [])
         print(f"成功加载 {len(self.attack_targets)} 个敌方目标。")
+
+        # TODO:打印敌方目标信息
+        for target in self.attack_targets:
+            print(f"敌方目标: {target.id}, 类型: {target.target_type}, 位置: {target.position}")
 
         # 3. 动态配置编队信息
         self.group_assignments = scenario_data.get('uav_groups', {})
@@ -237,7 +249,6 @@ class SwarmMissionManager:
         print("准备阶段完成，所有无人机已集结")
         self.phase_completion[MissionType.PREPARATION] = True
 
-    
     def _calculate_rally_point(self, target_area: TargetArea) -> Tuple[float, float, float]:
         """计算侦查区域的集结点"""
         # 在侦查区域边缘设置集结点
@@ -571,13 +582,19 @@ class SwarmMissionManager:
             print(f"任务执行失败: {e}")
             self._emergency_abort()
 
-    def _wait_for_phase_completion(self, phase_name: str, max_steps=5000, dt=0.1):
-        """等待阶段完成"""
+    def _wait_for_phase_completion(self, phase_name: str, max_steps=5000, dt=0.5):
+        """
+        等待阶段完成.
+        - 在可视化模式下，此函数仅作为仿真核心。
+        - 在TCP模式下，此函数会成为一个带实时速率控制的循环，并发布数据。
+        """
         print(f"开始运行仿真，等待 {phase_name} 阶段完成...")
         
         start_time = time.time()
         for step in range(max_steps):
-            # 1. 【新增】为所有跟随者计算并更新其队形目标点
+            loop_start_time = time.time()
+            
+            # 1. 为所有跟随者计算并更新其队形目标点
             for uav in self.uav_dict.values():
                 if not uav.is_leader and uav.leader is not None:
                     # 获取领航者的当前状态
@@ -606,8 +623,12 @@ class SwarmMissionManager:
             for uav in self.uav_dict.values():
                 if uav.status == UAVStatus.ACTIVE:
                     uav.update_position(dt)
+            
+            # 3. 如果是TCP模式，则发布数据
+            if not VISUAL_DEBUG_MODE:
+                self._publish_uav_data_to_tcp()
                     
-            # 3. 检查所有领航者的路径是否完成 (这部分逻辑不变)
+            # 4. 检查所有领航者的路径是否完成
             leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
             if not leaders: 
                 print("警告: 未找到领航者来判断阶段完成状态。")
@@ -625,9 +646,79 @@ class SwarmMissionManager:
                 duration = time.time() - start_time
                 print(f"{phase_name} 阶段完成！耗时: {duration:.2f}s, 仿真步数: {step}")
                 return
+            
+            # 5. 在TCP模式下，sleep以保持循环频率
+            if not VISUAL_DEBUG_MODE:
+                try:
+                    elapsed = time.time() - loop_start_time
+                    sleep_duration = (1.0 / 10.0) - elapsed
+                    if sleep_duration > 0:
+                        time.sleep(sleep_duration)
+                except KeyboardInterrupt:
+                    print("KeyboardInterrupt received. Exiting simulation loop.")
+                    break
         
         duration = time.time() - start_time
         print(f"警告: {phase_name} 阶段在达到最大步数 {max_steps} 未完成。耗时: {duration:.2f}s")
+
+    def report_destruction(self, destruction_events: Dict[int, int]):
+        """
+        报告并处理无人机或目标的损毁事件。
+        - 构造并发送 "DestoryEntity" 格式的TCP消息。
+        - 更新内部仿真状态，将被摧毁的UAV或目标标记为DESTROYED。
+
+        :param destruction_events: 一个字典，键为攻击者ID(drone_id)，值为被摧毁者ID(target_id)。
+        """
+        if not destruction_events:
+            print("警告: report_destruction 调用时未提供任何损毁事件。")
+            return
+
+        agents_list = []
+        for attacker_id, target_id in destruction_events.items():
+            # 1. 更新内部状态
+            target_found = False
+            # 检查被摧毁的是否为我方无人机
+            if target_id in self.uav_dict:
+                destroyed_uav = self.uav_dict[target_id]
+                if destroyed_uav.status != UAVStatus.DESTROYED:
+                    destroyed_uav.destroy()
+                    print(f"UAV-{attacker_id} 摧毁了UAV-{target_id}。")
+                target_found = True
+            else:
+                # 检查被摧毁的是否为敌方目标
+                target_to_destroy = next((tgt for tgt in self.attack_targets if tgt.id == target_id), None)
+                if target_to_destroy:
+                    if target_to_destroy.status != TargetStatus.DESTROYED:
+                        target_to_destroy.status = TargetStatus.DESTROYED
+                        print(f"UAV-{attacker_id} 摧毁了敌方目标 {target_id}。")
+                    target_found = True
+            
+            if not target_found:
+                print(f"警告: 在损毁事件中未找到目标ID {target_id}。")
+
+            # 2. 构造消息体
+            agents_list.append({
+                "drone_id": attacker_id,
+                "target_id": target_id
+            })
+
+        # 3. 构造并发送完整的TCP消息
+        destruction_payload = {
+            "key": "DestoryEntity",
+            "name": "ResearchGroup6",
+            "timestamp": time.time(),
+            "agents": agents_list
+        }
+
+        # 保存JSON用于调试
+        self._save_data_to_json(destruction_payload, "communication/json/last_destruction_event.json")
+
+        if self.tcp_client and self.tcp_client.connected:
+            print("正在发送损毁信息...")
+            self.tcp_client.send_json(destruction_payload)
+            print("损毁信息发送成功。")
+        else:
+            print("警告: TCP客户端未连接，无法发送损毁信息。")
 
     def _emergency_abort(self):
         """紧急中止任务"""
@@ -650,6 +741,79 @@ class SwarmMissionManager:
             "containment_zones": len(self.containment_zones)
         }
     
+    # ==================== TCP/IP通信方法 ====================
+    def _initialize_tcp_client(self):
+        """初始化TCP客户端"""
+        SERVER_HOST = '10.66.1.93'
+        SERVER_PORT = 13334
+        CLIENT_IP = '10.66.1.192'
+        self.tcp_client = TCPClient(host=SERVER_HOST, port=SERVER_PORT, client_ip=CLIENT_IP)
+        if not self.tcp_client.connect():
+            print(f"警告: TCP连接失败, 数据将不会被发布.")
+            self.tcp_client = None
+
+    def _publish_uav_data_to_tcp(self):
+        """将所有无人机的状态数据通过TCP发布"""
+        if not self.tcp_client or not self.pos_converter:
+            return
+
+        # 1. 构造JSON数据结构
+        multi_path = []
+        for uav in self.uav_dict.values():
+            if uav.status != UAVStatus.ACTIVE: continue
+            
+            # 坐标转换: ENU -> LLA
+            lon, lat, alt = self.pos_converter.ENUtoWGS84(uav.position[0], uav.position[1], uav.position[2])
+            
+            # 直接使用速度向量的分量
+            vel_x = uav.velocity[0]
+            vel_y = uav.velocity[1]
+            
+            dic = {
+                "agentId": uav.id,
+                "velocity_x": float(vel_x),
+                "velocity_y": float(vel_y),
+                "velocity_z": 0.0,  # 假设Z轴速度为0
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "altitude": float(alt),
+                "roll": 0.0,      # 简易模型，横滚为0
+                "pitch": 0.0,     # 简易模型，俯仰为0
+                "yaw": float(uav.heading)
+            }
+            multi_path.append(dic)
+            
+        poses_data = {
+            "key": "SwarmTrajectoryResults",
+            "name": "ResearchGroup6",
+            "timestamp": time.time(),
+            "agents": multi_path
+        }
+        
+        # 将最新数据保存到JSON文件
+        self._save_data_to_json(poses_data, "communication/json/ResearchGroup6ResultTest.json")
+
+        # 2. 发送数据
+        self.tcp_client.send_json(poses_data)
+
+    def disconnect(self):
+        """Safely disconnects the TCP client if it's connected."""
+        if self.tcp_client and self.tcp_client.connected:
+            print("Disconnecting TCP client...")
+            self.tcp_client.disconnect()
+
+
+    def _save_data_to_json(self, data: Dict, filepath: str):
+        """将数据保存为JSON文件"""
+        try:
+            # 确保目录存在
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            json_str = json.dumps(data, indent=4)
+            with open(filepath, "w") as file:
+                file.write(json_str)
+        except Exception as e:
+            print(f"Error saving data to JSON file '{filepath}': {e}")
+
     def plot_results(self):
         """可视化所有无人机和目标的轨迹/位置"""
         import matplotlib.pyplot as plt
@@ -688,7 +852,7 @@ class SwarmMissionManager:
         plt.axis('equal')
         plt.show()
 
-    def animate_preparation_phase(self, max_steps=5000, dt=0.1, interval=20):
+    def animate_preparation_phase(self, max_steps=5000, dt=0.5, interval=20):
         """
         通过动态动画来可视化和执行准备阶段。
         这个函数会设置绘图，然后启动一个包含仿真循环的动画。
@@ -808,59 +972,61 @@ if __name__ == "__main__":
     # --- 1. 初始化 ---
     mission_manager = SwarmMissionManager()
     
-    # --- 2. 设置外部接口 (使用 Mock Planner) ---
-    path_planner = PathPlanner(dubins_planner=SimpleDubinsPlanner())
-    # mission_manager.set_external_interfaces(path_planner) # 修正：函数名已改变
-    mission_manager.set_path_planner(path_planner)
-    
-    print("=== 开始无人机集群任务仿真（从XML加载） ===")
-    
-    # --- 3. 从XML文件初始化场景 ---
-    # 这个函数现在是启动的第一步
-    xml_file_path = '山地丛林.xml' # 确保XML文件与脚本在同一目录或提供正确路径
-    if not mission_manager.initialize_uavs_from_xml(xml_file_path):
-        print("场景初始化失败，程序退出。")
-        exit()
+    try:
+        # --- 2. 设置外部接口 (使用 Mock Planner) ---
+        path_planner = PathPlanner(dubins_planner=SimpleDubinsPlanner())
+        mission_manager.set_path_planner(path_planner)
         
-    # 激活所有已加载的无人机
-    for uav in mission_manager.uav_dict.values():
-        uav.activate()
-
-    # --- 4. 执行准备阶段 ---
-    # 此函数内部包含路径规划、角色设置
-    # mission_manager.execute_preparation_phase()
-    print("开始准备阶段：规划无人机集结路径...")
-    mission_manager.current_phase = MissionType.PREPARATION
-    mission_manager.phase_start_time = time.time()
-    
-    # 动态地为每个从XML加载的编队规划集结路径
-    assigned_groups = set()
-    for area in mission_manager.reconnaissance_areas:
-        if not area.assigned_uavs: continue
+        print("=== 开始无人机集群任务仿真（从XML加载） ===")
         
-        # 找到这组UAV属于哪个编队
-        group_id_found = None
-        for gid, uids in mission_manager.group_assignments.items():
-            if area.assigned_uavs[0] in uids: # 检查第一个UAV的归属
-                group_id_found = gid
-                break
-        
-        if group_id_found and group_id_found not in assigned_groups:
-            rally_point = mission_manager._calculate_rally_point(area)
-            # 调用重写后的函数，注意参数变化
-            mission_manager._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
-            assigned_groups.add(group_id_found)
+        # --- 3. 从XML文件初始化场景 ---
+        xml_file_path = '山地丛林.xml'
+        if not mission_manager.initialize_uavs_from_xml(xml_file_path):
+            print("场景初始化失败，程序退出。")
+            exit()
+            
+        # 激活所有已加载的无人机
+        for uav in mission_manager.uav_dict.values():
+            uav.activate()
 
-    # --- 5. 动态可视化准备阶段 ---
-    mission_manager.animate_preparation_phase()
+        # --- 4. 根据模式执行不同流程 ---
+        if VISUAL_DEBUG_MODE:
+            # 【调试模式】: 规划路径并启动可视化动画
+            print("--- 运行模式: 可视化调试 ---")
+            print("开始准备阶段：规划无人机集结路径...")
+            assigned_groups = set()
+            for area in mission_manager.reconnaissance_areas:
+                if not area.assigned_uavs: continue
+                group_id_found = None
+                for gid, uids in mission_manager.group_assignments.items():
+                    if area.assigned_uavs[0] in uids:
+                        group_id_found = gid
+                        break
+                if group_id_found and group_id_found not in assigned_groups:
+                    rally_point = mission_manager._calculate_rally_point(area)
+                    mission_manager._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+                    assigned_groups.add(group_id_found)
+            mission_manager.animate_preparation_phase()
 
-    print("仿真流程结束。")
+        else:
+            # 【联调模式】: 初始化TCP并执行后台仿真
+            print("--- 运行模式: TCP集成 ---")
+            mission_manager._initialize_tcp_client()
+            mission_manager.execute_preparation_phase()
 
-    # --- 6. 监控 ---
-    status = mission_manager.get_mission_status()
-    print(f"\n最终任务状态: {status}")
-    # print("生成轨迹图...")
-    # mission_manager.plot_results()
+        print("仿真流程结束。")
+
+        # --- 5. 监控 ---
+        status = mission_manager.get_mission_status()
+        print(f"\n最终任务状态: {status}")
+
+    except KeyboardInterrupt:
+        print("\n程序被用户中断 (Ctrl+C)")
+    finally:
+        # 确保无论如何都断开TCP连接
+        if mission_manager:
+            mission_manager.disconnect()
+        print("程序已安全退出。")
 
 
 

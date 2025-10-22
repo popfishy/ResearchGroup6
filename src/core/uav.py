@@ -154,26 +154,31 @@ class UAV:
         """
         【已修正】领航者沿着预先规划的路径移动。
         在每个时间步 dt 内，从当前位置沿着路径移动 'speed * dt' 的距离。
+        速度根据位置变化反算得出，确保准确性。
         """
         if not self.path_planning_complete or self.is_path_complete:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
+
+        pos_before_update = self.position.copy()
         distance_to_move = self.current_speed * dt
         
         while distance_to_move > 0 and not self.is_path_complete:
             if self.path_index >= len(self.planned_path) - 1:
                 self.is_path_complete = True
-                self.velocity = np.array([0.0, 0.0, 0.0])
                 self.position[:2] = self.planned_path[-1][:2]
                 break
+
             p_start_current = self.position[:2]
             p_end_target = self.planned_path[self.path_index][:2]
             
             vector_to_target = p_end_target - p_start_current
             distance_to_target = np.linalg.norm(vector_to_target)
-            if distance_to_target < 0.01:
+
+            if distance_to_target < 1e-6:
                 self.path_index += 1
                 continue
+
             if distance_to_move >= distance_to_target:
                 self.position[:2] = p_end_target
                 distance_to_move -= distance_to_target
@@ -183,18 +188,14 @@ class UAV:
                 self.position[:2] += move_vector
                 distance_to_move = 0
         
-        if not self.is_path_complete:
-            next_target = self.planned_path[self.path_index][:2]
-            vector_to_next_target = next_target - self.position[:2]
-            if np.linalg.norm(vector_to_next_target) > 0.1:
-                self.heading = np.arctan2(vector_to_next_target[1], vector_to_next_target[0])
+        # 根据实际位移反算速度
+        if dt > 0:
+            self.velocity = (self.position - pos_before_update) / dt
         
-        self.velocity = np.array([
-            self.current_speed * np.cos(self.heading),
-            self.current_speed * np.sin(self.heading),
-            0.0
-        ])
-        
+        # 更新航向
+        if np.linalg.norm(self.velocity[:2]) > 0.1:
+            self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
     def _update_follower_position(self, dt: float):
         """
         使用比例导航制导律和一个更平滑的速度控制器，以实现稳定追踪。
@@ -203,17 +204,29 @@ class UAV:
             # 没有目标，原地待命
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
+
         # 1. 计算与目标点的几何关系
         target_pos_2d = self.formation_target_pos[:2]
         current_pos_2d = self.position[:2]
         vector_to_target = target_pos_2d - current_pos_2d
         distance_to_target = np.linalg.norm(vector_to_target)
-        # 如果已经非常接近，直接吸附到目标点，避免在终点附近微小震荡
-        if distance_to_target < 1.0:
+
+        # 【新增】当领航者到达终点后，如果跟随者也到达了指定位置附近，则停止移动，避免转圈。
+        ACCEPTANCE_RADIUS = 2.0  # 到达目标的接受半径（米）
+        if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
             self.position[:2] = target_pos_2d
             self.heading = self.formation_target_heading
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
+
+        # 【修正】移除过于激进的“吸附”逻辑，该逻辑会导致速度频繁归零。
+        # 控制器本身和平滑减速逻辑足以处理逼近过程。
+        # if distance_to_target < 1.0:
+        #     self.position[:2] = target_pos_2d
+        #     self.heading = self.formation_target_heading
+        #     self.velocity = np.array([0.0, 0.0, 0.0])
+        #     return
+
         # 2. 【改进】平滑的速度控制
         # 定义一个“减速区”，当无人机进入该区域时才开始减速
         # 例如，减速区半径为无人机2秒的飞行距离
