@@ -79,7 +79,7 @@ class UAV:
         self.waypoints = []
         self.planned_path = []
         self.set_speed_limits(15, 30, 60)
-        print(f"UAV-{self.id} set as follower of UAV-{leader.id} with offset {self.formation_offset}")
+        # print(f"UAV-{self.id} set as follower of UAV-{leader.id} with offset {self.formation_offset}")
 
     def set_formation_target(self, target_pos: Tuple[float, float, float], target_heading: float):
         """为跟随者设置其动态的队形目标点"""
@@ -121,7 +121,7 @@ class UAV:
                 q0 = q1
 
             self.path_planning_complete = True
-            print(f"UAV-{self.id} (Leader): Dubins path planned with {len(self.planned_path)} points")
+            print(f"UAV-{self.id} (Leader): Dubins规划其共规划 {len(self.planned_path)} 个点")
             
         except Exception as e:
             print(f"UAV-{self.id}: Path planning failed: {e}")

@@ -1,47 +1,53 @@
-import numpy as np
-import dubins
-import matplotlib.pyplot as plt
+#=============================================================================
+#     Copyright (C) 2021-2024 Wageningen University - All Rights Reserved
+#                      Author: Gonzalo Mier
+#                         BSD-3 License
+#=============================================================================
+
+import math
+import fields2cover as f2c
+import os
+DATA_PATH = os.path.dirname(os.path.realpath(__file__))+"/" + 2 * "../"+"data/";
+
+# Import field
+field = f2c.Parser().importFieldGml(DATA_PATH + "test1.xml");
+orig_field = field.clone();
+# Transform into UTM to work in meters
+f2c.Transform.transformToUTM(field);
+
+robot = f2c.Robot(2.0, 6.0);
+const_hl = f2c.HG_Const_gen()
+no_hl = const_hl.generateHeadlands(field.getField(), 3.0 * robot.getWidth())
+bf = f2c.SG_BruteForce()
+swaths = bf.generateSwaths(math.pi, robot.getCovWidth(), no_hl.getGeometry(0))
+snake_sorter = f2c.RP_Snake()
+swaths = snake_sorter.genSortedSwaths(swaths)
+
+robot.setMinTurningRadius(2)
+path_planner = f2c.PP_PathPlanning()
+dubins = f2c.PP_DubinsCurves()
+path = path_planner.planPath(robot, swaths, dubins);
 
 
-def generate_dubins_path(start, end, radius, num_points):
-    # Calculate the Dubins path
-    path = dubins.shortest_path(start, end, radius)
-
-    # Sample the path at evenly spaced intervals
-    configurations, _ = path.sample_many(path.path_length() / num_points)
-
-    return configurations
+f2c.Visualizer.figure();
+f2c.Visualizer.plot(field);
+f2c.Visualizer.plot(no_hl);
+f2c.Visualizer.plot(path);
+f2c.Visualizer.save("Tutorial_8_1_UTM.png");
 
 
-def main():
-    # Start and end coordinates with heading angles
-    start_x, start_y, start_theta = 0.0, 0.0, 0.0
-    end_x, end_y, end_theta = 100.0, 100.0, 2 * np.pi
-    radius = 50.0
-    num_points = 200
+# Transform the generated path back to the previousa CRS.
+path_gps = f2c.Transform.transformToPrevCRS(path, field);
+f2c.Transform.transformToPrevCRS(field);
 
-    # Define the start and end configuration
-    start = (start_x, start_y, start_theta)
-    end = (end_x, end_y, end_theta)
+ps = [path_gps.getState(i).point for i in range(path_gps.size())]
+L = f2c.LineString(f2c.VectorPoint(ps))
 
-    # Generate the Dubins path
-    path = generate_dubins_path(start, end, radius, num_points)
-
-    # Print the path points
-    for point in path:
-        print(f"x: {point[0]:.2f}, y: {point[1]:.2f}, theta: {point[2]:.2f}")
-        # 绘制路径
-    x_points = [point[0] for point in path]
-    y_points = [point[1] for point in path]
-
-    plt.plot(x_points, y_points, marker="o")  # 绘制路径
-    plt.title("Dubins Path")
-    plt.xlabel("X Coordinate")
-    plt.ylabel("Y Coordinate")
-    plt.axis("equal")  # 保持比例
-    plt.grid()
-    plt.show()  # 显示图形
+f2c.Visualizer.figure();
+f2c.Visualizer.plot(orig_field.getCellsAbsPosition());
+f2c.Visualizer.plot(L);
+#f2c.Visualizer.plot(path_gps);
+#f2c.Visualizer.axis_equal();
+f2c.Visualizer.save("Tutorial_8_1_GPS.png");
 
 
-if __name__ == "__main__":
-    main()

@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from typing import List, Dict, Tuple
 from .utils import *
+from .uav import UAV
 
 class PathPlanner:
     def __init__(self, dubins_planner=None, coverage_planner=None, patrol_planner=None):
@@ -21,7 +22,7 @@ class PathPlanner:
         self.patrol_planner = patrol_planner
     
     def plan_leader_path(self, 
-                         leader_uav, # 直接传入UAV对象
+                         leader_uav:UAV, # 直接传入UAV对象
                          leader_waypoints: List[Tuple[float, float, float]]):
         """
         为给定的领航者无人机规划路径。
@@ -39,4 +40,3 @@ class PathPlanner:
         # 直接调用UAV自己的路径规划方法
         leader_uav.set_waypoints(leader_waypoints)
     
-        print(f"Path planning triggered for leader UAV-{leader_uav.id}")

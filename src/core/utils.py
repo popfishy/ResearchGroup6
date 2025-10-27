@@ -2,7 +2,7 @@ import numpy as np
 from enum import Enum
 from typing import List, Tuple, Optional, Dict
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 class UAVStatus(Enum):
     ACTIVE = "active"
@@ -63,11 +63,12 @@ class ZoneType(Enum):
 class TargetArea:
     """目标区域"""
     id: int
-    center: Tuple[float, float, float]
-    radius: float
-    priority: int  # 1-10, 10为最高优先级
-    area_type: ZoneType
-    assigned_uavs: List[int] = None  # 分配的无人机ID列表
+    center: Tuple[float, float, float]      # (x, y, z)
+    width: float                            # 沿局部x轴方向的宽度
+    height: float                           # 沿局部y轴方向的高度
+    priority: int = 1                       # 1-10, 10为最高优先级
+    area_type: ZoneType = ZoneType.SEARCH_AREA
+    assigned_uavs: List[int] = None
     search_complete: bool = False
 
 @dataclass
@@ -81,13 +82,14 @@ class EnemyTarget:
     detection_time: Optional[float] = None
     assigned_uav_id: Optional[int] = None
     estimated_value: float = 1.0  # 目标价值评估
-
+    
 @dataclass
 class ContainmentZone:
     """封控区域"""
     id: int
-    center: Tuple[float, float, float]
-    radius: float
-    patrol_altitude: float
+    center: Tuple[float, float, float]      # (x, y, z)
+    width: float                            # 水平面内矩形宽度
+    height: float                           # 水平面内矩形高度
+    patrol_altitude: float          # 巡逻高度（可选，若center.z未使用）
     patrol_speed: float
     assigned_uavs: List[int] = None
