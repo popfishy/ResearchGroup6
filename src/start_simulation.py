@@ -25,13 +25,12 @@ VISUAL_DEBUG_MODE = True
 
 
 # TODO: 任务分配
-# import random
-# from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
-# from xfd_allocation.scripts.CBPA.lib.Robot import Robot
-# from xfd_allocation.scripts.CBPA.lib.Task import Task
-# from xfd_allocation.scripts.CBPA.lib.Region import Region
-# from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
-# from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
+from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
+from xfd_allocation.scripts.CBPA.lib.Robot import Robot
+from xfd_allocation.scripts.CBPA.lib.Task import Task
+from xfd_allocation.scripts.CBPA.lib.Region import Region
+from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
+from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 
 
 O1_recognition_efficiency: float = None
@@ -54,7 +53,7 @@ class SwarmMissionManager:
     
     def __init__(self):
         # 基本配置
-        self.total_uavs = 50
+        self.total_uavs:int = 50
         self.current_phase = MissionType.PREPARATION
         self.phase_start_time = time.time()
         self.mission_start_time = time.time()
@@ -69,6 +68,11 @@ class SwarmMissionManager:
         # 队形配置
         self.formation_configs = {}
         self._initialize_formations()
+
+        # TODO: 后续统一使用RegionList表示
+        self.RegionList: list = [
+            Region(1, [4000, 0, 100], [650, 0, 100], [6500, -7000, 100], [4000, 0-7000, 100]),
+        ]
         
         # TODO：任务区域配置 - 需要您补充具体坐标
         self.reconnaissance_areas: List[TargetArea] = []  # 侦查区域列表
@@ -89,9 +93,11 @@ class SwarmMissionManager:
 
         # 外部接口
         self.path_planner: Optional[PathPlanner] = None
-        self.simulation_interface = None  # 仿真接口
         self.tcp_client: Optional[TCPClient] = None
         self.pos_converter = None
+        
+        # 任务分配求解器
+        self.cbpa_solver = CBPA_REC()
         
         # 初始化任务
         self._initialize_mission_areas()
@@ -167,7 +173,7 @@ class SwarmMissionManager:
         # 4. 在区域定义后立即生成所有覆盖路径
         try:
             print("--- 正在为所有子区域生成覆盖路径 ---")
-            self.region_cover_planner.cover_run(log_time='sim_run', cov_width=300)
+            self.region_cover_planner.cover_run(uav_velocity = 30.0, turning_radius = 50.0, log_time='sim_run', cov_width=400)
             print(f"成功为 {len(self.region_cover_planner.all_path)} 个区域生成了覆盖路径。")
         except Exception as e:
             print(f"错误: 区域覆盖路径生成失败: {e}")
@@ -349,109 +355,222 @@ class SwarmMissionManager:
                     coverage_path.append(point)
 
                 # 将这条路径分配给区域内的所有无人机（领机执行，随从跟随）
-                # self._assign_coverage_paths(area.assigned_uavs, coverage_path)
-                self.assign_and_combine_paths(area.assigned_uavs, coverage_path)
+                self._assign_coverage_paths(area.assigned_uavs, coverage_path)
             else:
                 print(f"警告: 找不到为区域 {area.id} 预计算的覆盖路径。")
-
-    def assign_and_combine_paths(self, uav_ids: List[int], recon_path_points: List[PathPoint]):
+    
+    def run_tcp_simulation(self, frequency=2.0):
         """
-        【新增】合并准备阶段和侦察阶段的路径，并分配给领航者。
+        【新增】在非调试模式下运行主仿真循环。
+        - 以指定频率持续更新所有无人机位置。
+        - 通过TCP发布数据。
+        - 直到所有领航者完成其完整路径后结束。
         """
-        if not uav_ids or not recon_path_points: return
+        print(f"--- 开始TCP仿真循环 (频率: {frequency}Hz) ---")
+        dt = 1.0 / frequency
         
-        leader_uav = next((self.uav_dict[uid] for uid in uav_ids if self.uav_dict.get(uid) and self.uav_dict[uid].is_leader), None)
+        try:
+            while not rospy.is_shutdown():
+                loop_start_time = time.time()
+
+                # 1. 检查所有领航者是否都已完成路径
+                leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
+                if not leaders:
+                    print("警告: 未找到活动的领航者，仿真提前结束。")
+                    break
+                if all(l.is_path_complete for l in leaders):
+                    print("所有领航者均已完成路径，仿真结束。")
+                    break
+
+                # 2. 更新所有无人机的位置（与动画逻辑完全相同）
+                #   a. 更新跟随者的目标点
+                for uav in self.uav_dict.values():
+                    if not uav.is_leader and uav.leader is not None:
+                        leader_pos, leader_heading = uav.leader.position, uav.leader.heading
+                        offset_x, offset_y = uav.formation_offset
+                        
+                        rotated_offset_x = offset_x * np.cos(leader_heading) - offset_y * np.sin(leader_heading)
+                        rotated_offset_y = offset_x * np.sin(leader_heading) + offset_y * np.cos(leader_heading)
+                        
+                        target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
+                        uav.set_formation_target(target_pos, leader_heading)
+                
+                #   b. 更新所有无人机的位置
+                for uav in self.uav_dict.values():
+                    if uav.status == UAVStatus.ACTIVE:
+                        uav.update_position(dt)
+
+                # 3. 通过TCP发布数据
+                self._publish_uav_data_to_tcp()
+
+                # 4. 控制循环频率
+                elapsed = time.time() - loop_start_time
+                sleep_duration = dt - elapsed
+                if sleep_duration > 0:
+                    time.sleep(sleep_duration)
+
+        except KeyboardInterrupt:
+            print("\nTCP仿真循环被用户中断。")
+        finally:
+            print("--- TCP仿真循环结束 ---")
+
+    def _assign_coverage_paths(self, uav_ids: List[int], path: List[PathPoint]):
+        """
+        将单条覆盖路径分配给一个无人机编队。
+        - 领航者将获得完整的路径。
+        - 跟随者将继续跟随领航者。
+        """
+        if not uav_ids: return
+        
+        # 假设编队的领航者是已经设置好的
+        leader_uav = None
+        for uid in uav_ids:
+            uav = self.uav_dict.get(uid)
+            if uav and uav.is_leader:
+                leader_uav = uav
+                break
         
         if leader_uav:
+            # 【最终修正】合并准备阶段路径和侦察阶段路径
             # 1. 规划准备阶段的Dubins路径
-            rally_point = (recon_path_points[0].x, recon_path_points[0].y, 100.0)
+            rally_point = (path[0].x, path[0].y, 100.0) # 侦察路径的起点即为集结点
             prep_path = self.path_planner.plan_leader_path(
                 start_pos=(leader_uav.init_global_position[0], leader_uav.init_global_position[1], leader_uav.heading),
                 waypoints=[rally_point]
             )
 
             # 2. 转换RegionCover路径为numpy数组格式
-            recon_path = [np.array([p.x, p.y, p.heading]) for p in recon_path_points]
+            recon_path = [np.array([p.x, p.y, p.heading]) for p in path]
             
             # 3. 合并两条路径
             full_path = prep_path + recon_path
             
             # 4. 将完整的路径直接设置给领航者
             leader_uav.set_planned_path(full_path)
+            
         else:
             print(f"警告: 在为区域分配覆盖路径时未找到领航者 (uav_ids: {uav_ids})。")
 
 
     # ==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
-        """执行打击阶段：攻击检测到的目标"""
-        print("开始打击阶段：攻击检测目标...")
+        """执行打击阶段：使用xfd_allocation库分配并攻击检测到的目标"""
+        print("\n--- 开始打击阶段：解散编队并分配攻击任务 ---")
         self.current_phase = MissionType.ATTACK
         self.phase_start_time = time.time()
         
         if not self.attack_targets:
-            print("未发现目标，跳过打击阶段")
+            print("未发现敌方目标，跳过打击阶段。")
             self.phase_completion[MissionType.ATTACK] = True
             return
+
+        # 1. 解散所有编队，使无人机独立行动
+        for uav in self.uav_dict.values():
+            uav.unset_formation_roles()
+            
+        # 2. 准备任务分配所需的数据
+        available_uav_ids = self._get_available_uavs_for_attack()
+        available_uavs_as_robots = [self._convert_uav_to_robot(self.uav_dict[uid]) for uid in available_uav_ids]
         
-        # 目标优先级排序
-        sorted_targets = sorted(self.attack_targets, 
-                               key=lambda t: (t.threat_level, t.estimated_value), 
-                               reverse=True)
+        active_targets_as_tasks = [self._convert_enemy_to_task(tgt) for tgt in self.attack_targets if tgt.status != TargetStatus.DESTROYED]
         
-        # 分配攻击任务
-        available_uavs = self._get_available_uavs_for_attack()
-        attack_assignments = self._assign_attack_missions(sorted_targets, available_uavs)
+        if not available_uavs_as_robots or not active_targets_as_tasks:
+            print("没有可用的无人机或活动目标，无法进行攻击。")
+            self.phase_completion[MissionType.ATTACK] = True
+            return
+            
+        # 定义仿真世界边界 (用于任务分配计算)
+        world_info = WorldInfo(limit_x=[-2000, 8000], limit_y=[-8000, 2000], limit_z=[0, 500])
         
-        # 执行攻击
-        self._execute_attack_missions(attack_assignments)
+        # 3. 调用CBPA求解器进行任务分配
+        print(f"为 {len(available_uavs_as_robots)} 架无人机和 {len(active_targets_as_tasks)} 个目标进行任务分配...")
+        try:
+            assignment_results, _, _, _, _ = self.cbpa_solver.solve_centralized(
+                available_uavs_as_robots, active_targets_as_tasks, world_info
+            )
+            
+        except Exception as e:
+            print(f"任务分配时发生错误: {e}")
+            self.phase_completion[MissionType.ATTACK] = True
+            return
+            
+        # 4. 解析分配结果并执行攻击
+        # assignment_results 的格式: [[target_id, uav_id1, uav_id2, ...], ...]
+        attack_assignments = {}
+        for assignment in assignment_results:
+            if len(assignment) >= 2:
+                target_id = assignment[0]
+                for uav_id in assignment[1:]:
+                    attack_assignments[uav_id] = target_id
         
-        print("打击阶段完成")
+        if attack_assignments:
+            self._execute_attack_missions(attack_assignments)
+        else:
+            print("任务分配未产生任何攻击指令。")
+
+        # 注意：这里的完成是指令下达完成，实际攻击完成需要仿真循环继续
+        print("打击阶段指令已下达。")
         self.phase_completion[MissionType.ATTACK] = True
-    
+
+    def _convert_uav_to_robot(self, uav: UAV) -> Robot:
+        """将UAV对象转换为xfd_allocation库所需的Robot对象"""
+        robot = Robot()
+        robot.robot_id = uav.id
+        robot.x = uav.position[0]
+        robot.y = uav.position[1]
+        robot.z = uav.position[2]
+        robot.robot_status = (uav.status == UAVStatus.ACTIVE)
+        robot.nom_velocity = uav.current_speed
+        return robot
+
+    def _convert_enemy_to_task(self, enemy: EnemyTarget) -> Task:
+        """将EnemyTarget对象转换为xfd_allocation库所需的Task对象"""
+        task = Task()
+        task.task_id = enemy.id
+        task.x = enemy.position[0]
+        task.y = enemy.position[1]
+        task.z = enemy.position[2]
+        task.task_status = (enemy.status != TargetStatus.DESTROYED)
+        task.str_need = enemy.threat_level
+        task.robot_need = enemy.robot_need
+        return task
+
     def _get_available_uavs_for_attack(self) -> List[int]:
         """获取可用于攻击的无人机"""
         available_uavs = []
         
         for uav_id, uav in self.uav_dict.items():
             # TODO: 检查无人机状态、燃料、武器等
-            # if uav.status == UAVStatus.ACTIVE and uav.fuel > 30:
-            #     available_uavs.append(uav_id)
-            available_uavs.append(uav_id)  # 临时：假设所有无人机可用
+            if uav.status == UAVStatus.ACTIVE:
+                available_uavs.append(uav_id)
         
         return available_uavs
     
-    def _assign_attack_missions(self, targets: List[EnemyTarget], uav_ids: List[int]) -> Dict[int, int]:
-        """分配攻击任务 - 返回 {uav_id: target_id} 映射"""
-        assignments = {}
-        
-        # 简单分配策略：一对一分配
-        for i, target in enumerate(targets):
-            if i < len(uav_ids):
-                uav_id = uav_ids[i]
-                assignments[uav_id] = target.id
-                target.assigned_uav_id = uav_id
-                print(f"分配 UAV-{uav_id} 攻击目标 {target.id}")
-        
-        return assignments
-    
     def _execute_attack_missions(self, assignments: Dict[int, int]):
-        """执行攻击任务"""
+        """为分配了攻击任务的无人机规划并设置路径"""
+        print(f"--- 正在为 {len(assignments)} 架无人机规划攻击路径 ---")
         for uav_id, target_id in assignments.items():
+            uav = self.uav_dict.get(uav_id)
             target = next((t for t in self.attack_targets if t.id == target_id), None)
-            if target:
-                # 规划攻击路径
-                attack_waypoint = target.position
+            
+            if uav and target:
+                print(f"UAV-{uav_id} 前往攻击目标 {target_id} at {target.position}")
                 
-                # TODO: 为无人机设置攻击航路点
-                # self.uav_dict[uav_id].set_waypoints([attack_waypoint])
-                # self.uav_dict[uav_id].current_mission = MissionType.ATTACK
+                # 规划从无人机当前位置到目标上方的简单路径
+                attack_path = self.path_planner.plan_leader_path(
+                    start_pos=(uav.position[0], uav.position[1], uav.heading),
+                    waypoints=[target.position]
+                )
                 
-                print(f"UAV-{uav_id} 前往攻击目标 {target_id} at {attack_waypoint}")
-                
-                # 模拟攻击结果
+                if attack_path:
+                    uav.set_planned_path(attack_path)
+                    uav.current_mission = MissionType.ATTACK # 更新无人机当前任务状态
+                    uav.status = UAVStatus.DESTROYED
+                else:
+                    print(f"警告: 无法为 UAV-{uav_id} 规划攻击路径。")
+
+                # 模拟攻击结果 (简单模型)
                 target.status = TargetStatus.ATTACKED
-                # TODO: 根据实际攻击效果更新目标状态
     
     # ==================== 阶段4: 封控阶段 ====================
     def execute_containment_phase(self):
@@ -540,7 +659,7 @@ class SwarmMissionManager:
             print(f"为 UAV-{uav_id} 设置圆形巡逻路径，半径 {radius}m")
     
     # ==================== 任务控制方法 ====================
-    def report_destruction(self, destruction_events: Dict[int, int]):
+    def send_attack_data(self, destruction_events: Dict[int, int]):
         """
         报告并处理无人机或目标的损毁事件。
         - 构造并发送 "DestoryEntity" 格式的TCP消息。
@@ -740,7 +859,7 @@ class SwarmMissionManager:
         ax.grid(True)
         plt.show()
 
-    def animate_reconnaissance_phase(self, max_steps=5000, dt=1, interval=20):
+    def animate_reconnaissance_phase(self, max_steps=5000, dt=0.5, interval=20):
         """通过动态动画来可视化和执行侦察阶段。"""
         print("开始侦察阶段的动态仿真与可视化...")
         # 1. ======== 动画设置 ========
@@ -873,6 +992,8 @@ if __name__ == "__main__":
             
             # 阶段2: 侦察阶段 - 规划并合并准备+侦察路径
             mission_manager.execute_reconnaissance_phase()
+
+            # mission_manager.execute_attack_phase()
             
             # mission_manager.plot_results()
             
@@ -887,6 +1008,7 @@ if __name__ == "__main__":
             # 1. 规划所有路径
             mission_manager.execute_preparation_phase()
             mission_manager.execute_reconnaissance_phase()
+            # mission_manager.execute_attack_phase()
 
             # 2. 运行统一的TCP仿真循环
             mission_manager.run_tcp_simulation(frequency=2.0)

@@ -7,9 +7,7 @@ from dataclasses import dataclass, field
 class UAVStatus(Enum):
     ACTIVE = "active"
     DESTROYED = "destroyed"
-    RETURNING = "returning"
     STANDBY = "standby"
-    CIRCLE = "circle"
 
 @dataclass 
 class PathPoint:
@@ -77,11 +75,12 @@ class EnemyTarget:
     id: int
     position: Tuple[float, float, float]
     target_type: str  # "vehicle", "building", "personnel"
-    threat_level: int  # 1-5, 5为最高威胁
+    threat_level: int  # 1-4, 4为最高威胁
+    robot_need: int # 需要多少uav进行攻击 1-4
     status: TargetStatus = TargetStatus.UNDETECTED
     detection_time: Optional[float] = None
     assigned_uav_id: Optional[int] = None
-    estimated_value: float = 1.0  # 目标价值评估
+    
     
 @dataclass
 class ContainmentZone:

@@ -53,7 +53,7 @@ class ScenarioParser:
             return {'uavs': [], 'enemies': [], 'uav_groups': {}}
 
         # 1. 设定坐标原点（使用解析到的第一架无人机的位置）并初始化转换器
-        origin_lla = (uav_data_raw[0]['lon'], uav_data_raw[0]['lat'], uav_data_raw[0]['alt'])
+        origin_lla = (uav_data_raw[0]['lon'], uav_data_raw[0]['lat'], 0)
         self.converter = PositionConvert(ref_lon=origin_lla[0], ref_lat=origin_lla[1], ref_alt=origin_lla[2])
         print(f"坐标转换器初始化成功，原点 (LLA): {origin_lla}")
 
@@ -81,6 +81,7 @@ class ScenarioParser:
                 position=(e, n, u),
                 target_type=data.get('type_name', 'Unknown'),
                 threat_level=self._estimate_threat(data.get('name', '')),
+                robot_need = self._estimate_robot_need(data.get('name', '')),
                 status=TargetStatus.DETECTED
             )
             enemies.append(enemy)
@@ -112,12 +113,21 @@ class ScenarioParser:
             print(f"解析实体 {object_name.text if object_name is not None else 'Unknown'} 失败: {e}")
             return None
 
-    # TODO:根据仿真修改
     def _estimate_threat(self, name: str) -> int:
         """根据目标名称简单评估威胁等级"""
         name = name.lower()
-        if '爱国者' in name or '干扰' in name: return 5
-        if '装甲车' in name: return 4
-        if '哨所' in name: return 3
-        if '士兵' in name: return 2
+        if '爱国者' in name or '干扰' in name: return 4
+        if '装甲车' in name: return 3
+        if '哨所' in name: return 2
+        if '士兵' in name: return 1
+        return 0
+
+    def _estimate_robot_need(self, name: str) -> int:
+        """根据目标名称简单评估需要多少uav进行攻击"""
+        name = name.lower()
+        if '爱国者' in name : return 3
+        if '干扰' in name: return 2
+        if '装甲车' in name: return 1
+        if '哨所' in name: return 2
+        if '士兵' in name: return 1
         return 1

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass
+from turtle import heading
 
 
 @dataclass
@@ -15,6 +16,7 @@ class Robot:
     ry: float = 0
     rz: float = 0
     rw: float = 0
+    heading: float = 0
     nom_velocity: float = 0  # robot cruise velocity (m/s)
     fuel: float = 0  # robot fuel penalty (per meter)
     str_capability: float = 0  # 机器人打击能力

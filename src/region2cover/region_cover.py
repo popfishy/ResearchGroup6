@@ -71,13 +71,13 @@ class RegionCover:
             checked_path.append(point)
         return checked_path
 
-    def cover_run(self, log_time, cov_width=200):
+    def cover_run(self, uav_velocity:float, turning_radius:float, log_time:str, cov_width:float=200):
         self.all_path = []
 
-        robot = f2c.Robot(2.0, cov_width)  # 宽度 覆盖宽度 最大曲率 最大曲率变化率
-        robot.setCruiseVel(30.0)  # 巡航速度
-        robot.setMinTurningRadius(50)  # m
-        robot.setMaxDiffCurv(0.1)  # 1/m^2 最大曲率变化率
+        robot = f2c.Robot(2.0, cov_width)  # 宽度 覆盖宽度 
+        robot.setCruiseVel(uav_velocity)  # 巡航速度
+        robot.setMinTurningRadius(turning_radius)  # m
+        robot.setMaxDiffCurv(0.1)  # 1/m^2 最大曲率变化率  TODO:0.2 as default
 
         const_hl = f2c.HG_Const_gen()
         bf = f2c.SG_BruteForce()
