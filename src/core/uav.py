@@ -39,6 +39,7 @@ class UAV:
 
         # 编队控制相关属性
         self.is_leader = False
+        self.formation_offset = None      # 跟随者的相对偏移 [x, y]
         self.formation_target_pos = None  # 跟随者的动态目标位置 [x, y, z]
         self.formation_target_heading = 0.0  # 跟随者的动态目标航向
         self.leader = None
@@ -96,6 +97,17 @@ class UAV:
         self.path_planning_complete = False
         self._plan_dubins_path()
     
+    def set_planned_path(self, path: List[np.ndarray]):
+        """
+        【新增】直接设置已经规划好的密集路径点。
+        这将绕过内部的Dubins规划，用于接收来自外部规划器（如RegionCover）的路径。
+        """
+        self.planned_path = path
+        self.current_path_index = 0
+        self.is_path_complete = False
+        self.path_planning_complete = True # 路径已提供，视为规划完成
+        print(f"UAV-{self.id} 已直接设置了包含 {len(self.planned_path)} 个点的预规划路径。")
+
     def _plan_dubins_path(self):
         """使用Dubins模型规划路径 (领航者逻辑)"""
         if not self.waypoints or not self.path_planner:
@@ -193,6 +205,7 @@ class UAV:
             self.velocity = (self.position - pos_before_update) / dt
         
         # 更新航向
+        # 【修正】只有在速度大于一个很小的阈值时才更新航向，避免在原地掉头
         if np.linalg.norm(self.velocity[:2]) > 0.1:
             self.heading = np.arctan2(self.velocity[1], self.velocity[0])
 
@@ -219,14 +232,6 @@ class UAV:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
 
-        # 【修正】移除过于激进的“吸附”逻辑，该逻辑会导致速度频繁归零。
-        # 控制器本身和平滑减速逻辑足以处理逼近过程。
-        # if distance_to_target < 1.0:
-        #     self.position[:2] = target_pos_2d
-        #     self.heading = self.formation_target_heading
-        #     self.velocity = np.array([0.0, 0.0, 0.0])
-        #     return
-
         # 2. 【改进】平滑的速度控制
         # 定义一个“减速区”，当无人机进入该区域时才开始减速
         # 例如，减速区半径为无人机2秒的飞行距离
@@ -239,6 +244,7 @@ class UAV:
         else:
             # 在减速区外，保持全速
             speed = self.current_speed
+        
         # 3. 【核心修正】使用比例导航制导律计算转弯角速度
         # 计算视线角（即期望的航向）
         desired_heading = np.arctan2(vector_to_target[1], vector_to_target[0])
@@ -276,10 +282,12 @@ class UAV:
         self.speed_multiplier = max(0.1, multiplier)
 
     def activate(self):
+        """激活无人机"""
         if self.fuel > 0:
             self.status = UAVStatus.ACTIVE
     
     def destroy(self):
+        """摧毁无人机"""
         self.status = UAVStatus.DESTROYED
         self.velocity = np.array([0.0, 0.0, 0.0])
     

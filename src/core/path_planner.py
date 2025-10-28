@@ -22,21 +22,33 @@ class PathPlanner:
         self.patrol_planner = patrol_planner
     
     def plan_leader_path(self, 
-                         leader_uav:UAV, # 直接传入UAV对象
-                         leader_waypoints: List[Tuple[float, float, float]]):
+                         start_pos: Tuple[float, float, float],
+                         waypoints: List[Tuple[float, float, float]]) -> List[np.ndarray]:
         """
-        为给定的领航者无人机规划路径。
-        它直接调用领航者自己的方法来完成路径规划。
+        为领航者规划一条从起点依次经过所有航路点的Dubins路径。
+        【修改】: 此函数现在返回路径，而不是直接设置给无人机。
         """
-        if not leader_uav:
-            raise ValueError("Leader UAV object cannot be None")
-            
         if not self.dubins_planner:
             print("Error: Dubins planner is not set in PathPlanner.")
-            return
-        # 将自身的dubins_planner实例赋给UAV，让UAV内部可以使用
-        leader_uav.set_path_planner(self)
+            return []
         
-        # 直接调用UAV自己的路径规划方法
-        leader_uav.set_waypoints(leader_waypoints)
+        full_path = []
+        current_pos = start_pos
+
+        for target_pos in waypoints:
+            # 使用Dubins规划器计算两点之间的路径
+            # TODO: 调整转弯半径和步长
+            path_segment, _ = self.dubins_planner.plan(
+                q0=(current_pos[0], current_pos[1], current_pos[2]),
+                q1=(target_pos[0], target_pos[1], 0), # 假设目标航向为0，可优化
+                turning_radius=100.0,
+                step_size=20.0
+            )
+            
+            if path_segment:
+                full_path.extend(path_segment)
+                # 更新当前位置为段的终点，用于下一段的起点
+                current_pos = path_segment[-1]
+        
+        return full_path
     

@@ -95,6 +95,7 @@ class SwarmMissionManager:
         # 初始化任务
         self._initialize_mission_areas()
     
+    # TODO: 1.添加其他需要的队形配置  
     def _initialize_formations(self):
         """初始化队形配置"""
         square_5x5_positions = []
@@ -113,9 +114,7 @@ class SwarmMissionManager:
             spacing=spacing
         )
         
-        # 其他队形配置...
-        # TODO: 添加其他需要的队形配置
-    
+    # TODO: 2.无人机飞行高度设置
     def _initialize_mission_areas(self):
         """初始化任务区域 - 根据给定范围生成覆盖路径和侦查区域"""
         print("--- 初始化任务区域 ---")
@@ -184,24 +183,6 @@ class SwarmMissionManager:
                 assigned_uavs=[]
             )
         ]
-    
-    def set_external_interfaces(self, dubins_planner=None, coverage_planner=None, 
-                               patrol_planner=None, simulation_interface=None):
-        """
-        设置外部接口，并用它们来配置核心的PathPlanner。
-        """
-        # 使用传入的底层规划器来实例化或配置总的PathPlanner
-        if not self.path_planner:
-            self.path_planner = PathPlanner() # 确保PathPlanner对象存在
-        # 将具体的规划器实现注入到PathPlanner中
-        if dubins_planner:
-            self.path_planner.set_dubins_planner(dubins_planner)
-        if coverage_planner:
-            self.path_planner.set_coverage_planner(coverage_planner) 
-        if patrol_planner:
-            self.path_planner.set_patrol_planner(patrol_planner)
-        self.simulation_interface = simulation_interface
-        print("外部接口设置完毕，PathPlanner已配置。")
 
     # TODO:也可以提前设置好pathplanner，一步到位
     def set_path_planner(self, path_planner: PathPlanner):
@@ -275,11 +256,18 @@ class SwarmMissionManager:
                     group_id_found = gid
                     break
             
+            # 直接从region_cover_planner获取路径起点
             if group_id_found and group_id_found not in assigned_groups:
-                rally_point = self._calculate_rally_point(area)
-                # 调用重写后的函数，注意参数变化
-                self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
-                assigned_groups.add(group_id_found)
+                area_id = area.id
+                if self.region_cover_planner and area_id <= len(self.region_cover_planner.start_point_list):
+                    start_point_state = self.region_cover_planner.start_point_list[area_id - 1]
+                    rally_point = (start_point_state.point.getX(), start_point_state.point.getY(), 100.0)
+                    print(f"\n--- 区域 {area_id} 的集结点设置为覆盖路径起点: ({rally_point[0]:.0f}, {rally_point[1]:.0f}) ---")
+                    
+                    self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+                    assigned_groups.add(group_id_found)
+                else:
+                    print(f"警告: 无法为区域 {area_id} 获取覆盖路径起点，跳过编队 {group_id_found} 的准备阶段规划。")
         
         # 等待所有无人机到达集结点（内部是仿真循环）
         self._wait_for_phase_completion("preparation")
@@ -287,23 +275,6 @@ class SwarmMissionManager:
         print("准备阶段完成，所有无人机已集结")
         self.phase_completion[MissionType.PREPARATION] = True
 
-    def _calculate_rally_point(self, target_area: TargetArea) -> Tuple[float, float, float]:
-        """使用区域的左上角作为集结点"""
-        area_id = target_area.id
-        if self.reconnaissance_sub_areas_corners and area_id <= len(self.reconnaissance_sub_areas_corners):
-            # corners: (a, b, c, d), 'a' is top-left
-            top_left_corner = self.reconnaissance_sub_areas_corners[area_id - 1][0]
-            rally_point = (top_left_corner[0], top_left_corner[1], 100.0)
-            print(f"\n --- 区域 {area_id} 的集结点设置为左上角: ({rally_point[0]:.0f}, {rally_point[1]:.0f}) ---")
-            return rally_point
-        else:
-            # Fallback
-            print(f"警告: 无法为区域 {area_id} 获取角点信息，使用备用集结点计算方法。")
-            center = target_area.center
-            width = target_area.width
-            height = target_area.height
-            return (center[0] - width / 2, center[1] + height / 2, center[2])
-    
     def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str):
         """
         - 动态选择领航者。
@@ -323,7 +294,7 @@ class SwarmMissionManager:
         
         # 2. 为领航者设置角色并规划路径
         leader_uav.set_as_leader()
-        self.path_planner.plan_leader_path(leader_uav, [target_point])
+        
         # 3. 设置所有其他无人机为跟随者，并计算其相对领航者的初始偏移
         follower_count = 0
         leader_init_pos = leader_uav.init_global_position # 使用初始位置计算偏移
@@ -359,10 +330,18 @@ class SwarmMissionManager:
                     group_id_found = gid
                     break
             
+            # 直接从region_cover_planner获取路径起点
             if group_id_found and group_id_found not in assigned_groups:
-                rally_point = self._calculate_rally_point(area)
-                self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
-                assigned_groups.add(group_id_found)
+                area_id = area.id
+                if self.region_cover_planner and area_id <= len(self.region_cover_planner.start_point_list):
+                    start_point_state = self.region_cover_planner.start_point_list[area_id - 1]
+                    rally_point = (start_point_state.point.getX(), start_point_state.point.getY(), 100.0)
+                    print(f"\n--- 区域 {area_id} 的集结点设置为覆盖路径起点: ({rally_point[0]:.0f}, {rally_point[1]:.0f}) ---")
+
+                    self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+                    assigned_groups.add(group_id_found)
+                else:
+                    print(f"警告: 无法为区域 {area_id} 获取覆盖路径起点，跳过编队 {group_id_found} 的准备阶段规划。")
 
 
 # ==================== 阶段2: 侦查阶段 ====================
@@ -382,18 +361,14 @@ class SwarmMissionManager:
                 # 转换路径格式为PathPoint列表
                 coverage_path = []
                 
-                # 【修改】使用 .size() 和索引来迭代，以匹配fields2cover对象的用法
                 if not hasattr(coverage_path_raw, 'size'):
                     print(f"警告: 为区域 {area.id} 获取的路径对象无效，跳过。")
                     continue
 
                 for i in range(coverage_path_raw.size()):
                     p_state = coverage_path_raw[i]
-                    if hasattr(p_state, 'point') and hasattr(p_state, 'angle'):
-                        point = PathPoint(p_state.point.getX(), p_state.point.getY(), area.center[2], p_state.angle)
-                        coverage_path.append(point)
-                    else:
-                        print(f"警告: 路径点索引 {i} 的格式不正确，已跳过。")
+                    point = PathPoint(p_state.point.getX(), p_state.point.getY(), area.center[2], p_state.angle)
+                    coverage_path.append(point)
 
                 # 将这条路径分配给区域内的所有无人机（领机执行，随从跟随）
                 self._assign_coverage_paths(area.assigned_uavs, coverage_path)
@@ -432,19 +407,25 @@ class SwarmMissionManager:
                 break
         
         if leader_uav:
-            # 将路径点列表转换为规划器可用的目标点列表
-            target_points = [(p.x, p.y, p.z) for p in path]
-            self.path_planner.plan_leader_path(leader_uav, target_points)
-            print(f"为领航者 UAV-{leader_uav.id} 分配了包含 {len(path)} 个点的覆盖路径。")
+            # 【最终修正】合并准备阶段路径和侦察阶段路径
+            # 1. 规划准备阶段的Dubins路径
+            rally_point = (path[0].x, path[0].y, 100.0) # 侦察路径的起点即为集结点
+            prep_path = self.path_planner.plan_leader_path(
+                start_pos=(leader_uav.init_global_position[0], leader_uav.init_global_position[1], leader_uav.heading),
+                waypoints=[rally_point]
+            )
+
+            # 2. 转换RegionCover路径为numpy数组格式
+            recon_path = [np.array([p.x, p.y, p.heading]) for p in path]
+            
+            # 3. 合并两条路径
+            full_path = prep_path + recon_path
+            
+            # 4. 将完整的路径直接设置给领航者
+            leader_uav.set_planned_path(full_path)
+            
         else:
-            # 如果找不到领航者，则分配给第一个无人机（备用逻辑）
-            leader_id = uav_ids[0]
-            leader_uav = self.uav_dict[leader_id]
-            leader_uav.set_as_leader() # 紧急设为领航者
-            # 将路径点列表转换为规划器可用的目标点列表
-            target_points = [(p.x, p.y, p.z) for p in path]
-            self.path_planner.plan_leader_path(leader_uav, target_points)
-            print(f"警告: 在编队中未找到预设领航者。已将 UAV-{leader_id} 设为领航者并分配覆盖路径。")
+            print(f"警告: 在为区域分配覆盖路径时未找到领航者 (uav_ids: {uav_ids})。")
 
 
 
@@ -841,41 +822,68 @@ class SwarmMissionManager:
             self.tcp_client.disconnect()
 
     def plot_results(self):
-        """可视化所有无人机和目标的轨迹/位置"""
+        """可视化无人机初始位置、侦查区域和规划的侦查路径"""
         import matplotlib.pyplot as plt
-        plt.figure(figsize=(16, 12))
+        from matplotlib.patches import Rectangle
+        import numpy as np
+
+        fig, ax = plt.subplots(figsize=(16, 12))
+        ax.set_aspect('equal', adjustable='box')
         
-        # 绘制无人机轨迹
-        colors = ['r', 'b', 'g', 'c', 'm', 'y']
+        # 1. 绘制侦察区域
+        for i, area in enumerate(self.reconnaissance_areas):
+            bottom_left_x = area.center[0] - area.width / 2
+            bottom_left_y = area.center[1] - area.height / 2
+            rect = Rectangle(xy=(bottom_left_x, bottom_left_y), 
+                             width=area.width, height=area.height,
+                             color='blue', fill=False, linestyle='--', 
+                             label='Recon Area' if i == 0 else "")
+            ax.add_patch(rect)
+
+        # 2. 绘制无人机初始位置和规划轨迹
+        colors = plt.cm.jet(np.linspace(0, 1, len(self.group_assignments)))
         group_ids = sorted(self.group_assignments.keys())
+        
         for i, group_id in enumerate(group_ids):
-            color = colors[i % len(colors)]
+            color = colors[i]
+            is_first_uav_in_group = True # 用于确保每组只添加一个 "Start" 标签
             
             for uav_id in self.group_assignments[group_id]:
                 uav = self.uav_dict[uav_id]
-                history = np.array(uav.position_history)
                 
-                if uav.is_leader:
-                    plt.plot(history[:, 0], history[:, 1], color=color, linewidth=2.5, label=f'Group {group_id} Leader')
-                else:
-                    plt.plot(history[:, 0], history[:, 1], color=color, linestyle='--', linewidth=1)
+                # 绘制初始位置
+                init_pos = uav.init_global_position
+                marker = 's' if uav.is_leader else 'o'
+                label = f'Group {group_id} Start' if is_first_uav_in_group else None
+                ax.scatter(init_pos[0], init_pos[1], color=color, marker=marker, s=50, label=label)
+                is_first_uav_in_group = False
 
-        # 绘制敌方目标位置
+                # 绘制领航者规划路径
+                if uav.is_leader and uav.waypoints:
+                    # 准备阶段的路径（从初始位置到侦察路径起点）
+                    prep_path_start = uav.init_global_position[:2]
+                    # 【修改】使用索引访问numpy数组
+                    recon_path_start = (uav.waypoints[0][0], uav.waypoints[0][1])
+                    ax.plot([prep_path_start[0], recon_path_start[0]], 
+                            [prep_path_start[1], recon_path_start[1]], 
+                            color=color, linestyle=':', linewidth=1.2)
+
+                    # 侦察阶段的覆盖路径
+                    # 【修改】使用索引访问numpy数组
+                    recon_path_points = np.array([(p[0], p[1]) for p in uav.waypoints])
+                    ax.plot(recon_path_points[:, 0], recon_path_points[:, 1], color=color, 
+                            linewidth=2.0, label=f'Group {group_id} Path')
+
+        # 3. 绘制敌方目标位置
         if self.attack_targets:
             enemy_pos = np.array([tgt.position for tgt in self.attack_targets])
-            plt.scatter(enemy_pos[:, 0], enemy_pos[:, 1], c='black', marker='x', s=100, label='Enemy Targets')
+            ax.scatter(enemy_pos[:, 0], enemy_pos[:, 1], c='black', marker='x', s=100, label='Enemy Targets')
 
-        # 绘制集结点
-        for area in self.reconnaissance_areas:
-            rp = self._calculate_rally_point(area)
-            plt.plot(rp[0], rp[1], 'k*', markersize=15, mfc='yellow', label='Rally Point')
-
-        plt.title('Swarm Formation Simulation from XML Scenario')
-        plt.xlabel('East (m)')
-        plt.ylabel('North (m)')
-        plt.legend()
-        plt.grid(True)
-        plt.axis('equal')
+        ax.set_title('Planned Mission Trajectories Overview')
+        ax.set_xlabel('East (m)')
+        ax.set_ylabel('North (m)')
+        ax.legend(loc='upper right')
+        ax.grid(True)
         plt.show()
 
     def animate_preparation_phase(self, max_steps=5000, dt=0.5, interval=20):
@@ -1003,12 +1011,17 @@ class SwarmMissionManager:
         ax.set_ylabel('Y (m)')
         ax.grid(True)
         # 绘制侦察区域边界
-        from matplotlib.patches import Circle
-        for area in self.reconnaissance_areas:
-            circle = Circle(xy=(area.center[0], area.center[1]), radius=area.radius, 
-                            color='blue', fill=False, linestyle='--', label='Recon Area')
-            ax.add_patch(circle)
-
+        from matplotlib.patches import Rectangle
+        for i, area in enumerate(self.reconnaissance_areas):
+            # 计算矩形左下角坐标
+            bottom_left_x = area.center[0] - area.width / 2
+            bottom_left_y = area.center[1] - area.height / 2
+            rect = Rectangle(xy=(bottom_left_x, bottom_left_y), 
+                             width=area.width, height=area.height,
+                             color='blue', fill=False, linestyle='--', 
+                             label='Recon Area' if i == 0 else None)
+            ax.add_patch(rect)
+ 
         # 2. ======== 初始化绘图元素 ========
         uav_plots = {}
         colors = ['r', 'b', 'g', 'c', 'm', 'y']
@@ -1114,12 +1127,15 @@ if __name__ == "__main__":
         if VISUAL_DEBUG_MODE:
             # 【调试模式】: 规划路径并启动可视化动画
             
-            # 阶段1: 准备阶段
+            # 阶段1: 准备阶段 - 仅设置领航者和随从角色
             mission_manager.plan_preparation_phase()
-            # mission_manager.animate_preparation_phase()
             
-            # 阶段2: 侦察阶段
+            # 阶段2: 侦察阶段 - 规划并合并准备+侦察路径
             mission_manager.plan_reconnaissance_phase()
+            
+            # mission_manager.plot_results()
+            
+            # 使用一个动画函数展示完整轨迹
             mission_manager.animate_reconnaissance_phase()
 
         else:
