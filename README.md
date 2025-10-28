@@ -97,6 +97,8 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 
 ```
 
+10.66.1.93
+
 # 连接大屏幕的命令
 roslaunch rosbridge_server rosbridge_websocket.launch
 
@@ -106,29 +108,13 @@ rosrun rosbridge_server rosbridge_websocket.py
 rosrun rosserial_server socket_node
 ```
 
+<img src="/home/yjq/.config/Typora/typora-user-images/image-20251021155236165.png" alt="image-20251021155236165" style="zoom:50%;" />
+
+drone id是攻击者id   target_id是被攻击者id
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+巡逻区域为(4000, 0, 0 )    (6500, 0, 0)   (4000, -7000,0)   (6500,-7000,0)
 
 
 

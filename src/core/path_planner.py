@@ -36,12 +36,10 @@ class PathPlanner:
         current_pos = start_pos
 
         for target_pos in waypoints:
-            # 使用Dubins规划器计算两点之间的路径
-            # TODO: 调整转弯半径和步长
             path_segment, _ = self.dubins_planner.plan(
                 q0=(current_pos[0], current_pos[1], current_pos[2]),
                 q1=(target_pos[0], target_pos[1], 0), # 假设目标航向为0，可优化
-                turning_radius=100.0,
+                turning_radius=self.dubins_planner.turning_radius,
                 step_size=20.0
             )
             

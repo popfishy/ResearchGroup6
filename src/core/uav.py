@@ -79,7 +79,7 @@ class UAV:
         self.formation_offset = np.array(offset) # <--- 存储偏移量
         self.waypoints = []
         self.planned_path = []
-        self.set_speed_limits(15, 30, 60)
+        self.set_speed_limits(15, 45, 60)
         # print(f"UAV-{self.id} set as follower of UAV-{leader.id} with offset {self.formation_offset}")
 
     def set_formation_target(self, target_pos: Tuple[float, float, float], target_heading: float):
@@ -89,21 +89,14 @@ class UAV:
             self.formation_target_heading = target_heading
     
     # ==================== 领航者专用方法 ====================
-    def set_waypoints(self, waypoints: List[Tuple[float, float, float]]):
-        """设置航路点，触发Dubins路径规划 (主要由领航者调用)"""
-        self.waypoints = [np.array(wp, dtype=float) for wp in waypoints]
-        self.current_path_index = 0
-        self.is_path_complete = False
-        self.path_planning_complete = False
-        self._plan_dubins_path()
-    
     def set_planned_path(self, path: List[np.ndarray]):
         """
-        【新增】直接设置已经规划好的密集路径点。
+        【统一方法】直接设置已经规划好的密集路径点。
         这将绕过内部的Dubins规划，用于接收来自外部规划器（如RegionCover）的路径。
         """
         self.planned_path = path
         self.current_path_index = 0
+        self.path_index = 0 # 重置两个索引
         self.is_path_complete = False
         self.path_planning_complete = True # 路径已提供，视为规划完成
         print(f"UAV-{self.id} 已直接设置了包含 {len(self.planned_path)} 个点的预规划路径。")
@@ -164,50 +157,70 @@ class UAV:
 
     def _update_leader_position(self, dt: float):
         """
-        【已修正】领航者沿着预先规划的路径移动。
-        在每个时间步 dt 内，从当前位置沿着路径移动 'speed * dt' 的距离。
-        速度根据位置变化反算得出，确保准确性。
+        【重构】领航者沿着预先规划的路径移动。
+        通过在路径点之间进行线性插值来精确计算新的位置和朝向。
         """
         if not self.path_planning_complete or self.is_path_complete:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
 
-        pos_before_update = self.position.copy()
         distance_to_move = self.current_speed * dt
-        
+
         while distance_to_move > 0 and not self.is_path_complete:
+            # 检查是否已在或超过路径的最后一个点
             if self.path_index >= len(self.planned_path) - 1:
                 self.is_path_complete = True
-                self.position[:2] = self.planned_path[-1][:2]
+                final_point = self.planned_path[-1]
+                self.position[:2] = final_point[:2]
+                self.heading = final_point[2]
                 break
 
-            p_start_current = self.position[:2]
-            p_end_target = self.planned_path[self.path_index][:2]
-            
-            vector_to_target = p_end_target - p_start_current
-            distance_to_target = np.linalg.norm(vector_to_target)
+            # 获取当前线段的起点和终点
+            p_start = self.planned_path[self.path_index]
+            p_end = self.planned_path[self.path_index + 1]
 
-            if distance_to_target < 1e-6:
-                self.path_index += 1
-                continue
+            vector_to_end = p_end[:2] - self.position[:2]
+            distance_to_end = np.linalg.norm(vector_to_end)
 
-            if distance_to_move >= distance_to_target:
-                self.position[:2] = p_end_target
-                distance_to_move -= distance_to_target
+            if distance_to_move >= distance_to_end:
+                # 移动距离超过了到下一个点的距离，直接跳到下一个点
+                self.position[:2] = p_end[:2]
+                distance_to_move -= distance_to_end
                 self.path_index += 1
             else:
-                move_vector = (vector_to_target / distance_to_target) * distance_to_move
-                self.position[:2] += move_vector
-                distance_to_move = 0
-        
-        # 根据实际位移反算速度
-        if dt > 0:
-            self.velocity = (self.position - pos_before_update) / dt
-        
-        # 更新航向
-        # 【修正】只有在速度大于一个很小的阈值时才更新航向，避免在原地掉头
-        if np.linalg.norm(self.velocity[:2]) > 0.1:
-            self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+                # 在当前线段内进行插值
+                segment_vector = p_end[:2] - p_start[:2]
+                segment_length = np.linalg.norm(segment_vector)
+                
+                if segment_length > 1e-6:
+                    move_direction = segment_vector / segment_length
+                    self.position[:2] += move_direction * distance_to_move
+                
+                # 插值计算朝向 (解决抖动问题的关键)
+                # 计算在线段上的插值比例 t
+                vec_on_segment = self.position[:2] - p_start[:2]
+                t = np.dot(vec_on_segment, segment_vector) / (segment_length ** 2) if segment_length > 1e-6 else 1.0
+                t = np.clip(t, 0.0, 1.0)
+                
+                start_heading = p_start[2]
+                end_heading = p_end[2]
+                
+                # 处理角度环绕问题
+                heading_diff = end_heading - start_heading
+                if heading_diff > np.pi: heading_diff -= 2 * np.pi
+                if heading_diff < -np.pi: heading_diff += 2 * np.pi
+                
+                self.heading = start_heading + t * heading_diff
+                distance_to_move = 0 # 移动完成
+
+        # 根据新的朝向和速度更新速度向量
+        self.velocity = np.array([
+            self.current_speed * np.cos(self.heading),
+            self.current_speed * np.sin(self.heading),
+            0.0
+        ])
+        if self.is_path_complete:
+            self.velocity = np.array([0.0, 0.0, 0.0])
 
     def _update_follower_position(self, dt: float):
         """
@@ -232,18 +245,14 @@ class UAV:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
 
-        # 2. 【改进】平滑的速度控制
-        # 定义一个“减速区”，当无人机进入该区域时才开始减速
-        # 例如，减速区半径为无人机2秒的飞行距离
-        deceleration_radius = 2.0 * self.current_speed 
-        if distance_to_target < deceleration_radius:
-            # 在减速区内，速度与距离成正比
-            speed = self.current_speed * (distance_to_target / deceleration_radius)
-            # 设置一个最小速度，避免完全停下
-            speed = max(speed, self.min_speed * 0.5) 
-        else:
-            # 在减速区外，保持全速
-            speed = self.current_speed
+        # 2. 【改进】使用P控制器进行平滑的速度控制
+        SPEED_CONTROL_GAIN = 0.5  # 比例增益 (可调参数)
+        leader_speed = np.linalg.norm(self.leader.velocity[:2]) if self.leader else self.current_speed
+        
+        desired_speed = leader_speed + SPEED_CONTROL_GAIN * distance_to_target
+        
+        # 将速度限制在无人机的物理能力范围内
+        speed = np.clip(desired_speed, self.min_speed, self.max_speed)
         
         # 3. 【核心修正】使用比例导航制导律计算转弯角速度
         # 计算视线角（即期望的航向）
