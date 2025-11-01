@@ -5,6 +5,7 @@ import numpy as np
 import time
 from typing import List, Tuple, Optional, Any, Dict
 import math
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import json
@@ -17,6 +18,9 @@ from core.path_planner import PathPlanner
 from core.scenario_parser import ScenarioParser
 from communication.scripts.tcp_client_communication import TCPClient
 from region2cover.region_cover import RegionCover
+
+matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'WenQuanYi Zen Hei', 'DejaVu Sans', 'Arial Unicode MS']
+matplotlib.rcParams['axes.unicode_minus'] = False
 
 # ==================== 全局配置 ====================
 # True:  运行本地Matplotlib可视化进行调试
@@ -247,7 +251,11 @@ class SwarmMissionManager:
     # ! ==================== 阶段1: 准备阶段 ====================
     def execute_preparation_phase(self):
         """为准备阶段规划所有编队的集结路径"""
-        print("正在规划准备阶段路径...")
+        print("\n=== 准备阶段开始 ===")
+        print(f"总UAV数量: {len(self.uav_dict)}")
+        print(f"编队数量: {len(self.group_assignments)}")
+        print(f"侦查区域数量: {len(self.reconnaissance_areas)}")
+        
         assigned_groups = set()
         for area in self.reconnaissance_areas:
             if not area.assigned_uavs: continue
@@ -270,6 +278,19 @@ class SwarmMissionManager:
                     assigned_groups.add(group_id_found)
                 else:
                     print(f"警告: 无法为区域 {area_id} 获取覆盖路径起点，跳过编队 {group_id_found} 的准备阶段规划。")
+        
+        # 【调试】检查编队设置结果
+        print(f"\n准备阶段完成。已设置编队数: {len(assigned_groups)}")
+        leader_count = sum(1 for uav in self.uav_dict.values() if uav.is_leader)
+        follower_count = sum(1 for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is not None)
+        no_role_count = sum(1 for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is None)
+        print(f"UAV角色统计: {leader_count} 个leader, {follower_count} 个follower, {no_role_count} 个无角色")
+        
+        if no_role_count > 0:
+            print(f"警告: 有 {no_role_count} 架UAV没有被分配编队角色！")
+            # 找出这些UAV
+            no_role_uavs = [uav.id for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is None]
+            print(f"无角色UAV ID: {no_role_uavs[:10]}{'...' if len(no_role_uavs) > 10 else ''}")
 
     def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str):
         """
@@ -563,9 +584,10 @@ class SwarmMissionManager:
                 )
                 
                 if attack_path:
+                    # 【修复】将UAV设为领航者，这样它才能沿着规划的路径移动
+                    uav.set_as_leader()
                     uav.set_planned_path(attack_path)
                     uav.current_mission = MissionType.ATTACK # 更新无人机当前任务状态
-                    uav.status = UAVStatus.DESTROYED
                 else:
                     print(f"警告: 无法为 UAV-{uav_id} 规划攻击路径。")
 
@@ -859,6 +881,52 @@ class SwarmMissionManager:
         ax.grid(True)
         plt.show()
 
+    def _simulate_reconnaissance_silently(self, dt=0.5, max_steps=10000):
+        """静默模拟侦查阶段，不显示动画，仅更新UAV位置到侦查结束位置。"""
+        
+        # 【调试】检查编队信息
+        leader_count = sum(1 for uav in self.uav_dict.values() if uav.is_leader)
+        follower_count = sum(1 for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is not None)
+        print(f"开始静默模拟 - 编队统计: {leader_count} 个领航者, {follower_count} 个跟随者")
+        
+        if follower_count == 0 and leader_count < len(self.uav_dict):
+            print(f"警告: 检测到有 {len(self.uav_dict) - leader_count} 架UAV没有编队角色！")
+            print("这可能是因为编队信息被意外清除。")
+        
+        for step in range(max_steps):
+            # 检查是否所有领航者都完成了路径
+            leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
+            if not leaders:
+                break
+            if all(l.is_path_complete for l in leaders):
+                break
+            
+            # 更新跟随者的目标点
+            for uav in self.uav_dict.values():
+                if not uav.is_leader and uav.leader is not None:
+                    leader_pos, leader_heading = uav.leader.position, uav.leader.heading
+                    offset_x, offset_y = uav.formation_offset
+                    
+                    rotated_offset_x = offset_x * np.cos(leader_heading) - offset_y * np.sin(leader_heading)
+                    rotated_offset_y = offset_x * np.sin(leader_heading) + offset_y * np.cos(leader_heading)
+                    
+                    target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
+                    uav.set_formation_target(target_pos, leader_heading)
+            
+            # 更新所有无人机位置
+            for uav in self.uav_dict.values():
+                if uav.status == UAVStatus.ACTIVE:
+                    uav.update_position(dt)
+        
+        print(f"侦查阶段模拟完成，共执行 {step} 步。")
+        
+        # 【调试】打印最终位置信息
+        sample_size = min(10, len(self.uav_dict))
+        print(f"前 {sample_size} 架UAV的最终位置:")
+        for uav_id, uav in sorted(self.uav_dict.items())[:sample_size]:
+            role = "Leader" if uav.is_leader else ("Follower" if uav.leader is not None else "None")
+            print(f"  UAV-{uav_id}({role}): ({uav.position[0]:.1f}, {uav.position[1]:.1f})")
+
     def animate_reconnaissance_phase(self, max_steps=5000, dt=0.5, interval=20):
         """通过动态动画来可视化和执行侦察阶段。"""
         print("开始侦察阶段的动态仿真与可视化...")
@@ -948,6 +1016,183 @@ class SwarmMissionManager:
         print("侦察阶段动画播放完毕。")
         self.phase_completion[MissionType.RECONNAISSANCE] = True
 
+    def animate_attack_phase(self, max_steps=3000, dt=0.5, interval=20, simulate_recon_first=True):
+        """通过动态动画来可视化和执行打击阶段。
+        
+        显示内容：
+        1. 侦查区域
+        2. UAV在侦查阶段结束后的位置（打击阶段起点）
+        3. 敌方目标
+        4. 执行打击任务的无人机前往目标的动态路径
+        
+        参数：
+        - simulate_recon_first: 是否先模拟执行侦查阶段（不显示动画）以获得侦查结束后的位置
+        """
+        print("开始打击阶段的动态仿真与可视化...")
+        
+        # 0. ======== 预处理：模拟侦查阶段飞行 ========
+        if simulate_recon_first:
+            print("正在模拟侦查阶段飞行以获取UAV结束位置...")
+            self._simulate_reconnaissance_silently(dt=dt)
+            print(f"侦查阶段模拟完成。UAV已到达侦查结束位置。")
+            
+            # 重新执行攻击阶段任务分配，因为现在UAV位置已经更新到侦查结束位置
+            print("\n基于侦查结束位置，重新进行攻击任务分配和路径规划...")
+            self.execute_attack_phase()
+        
+        # 0.1 ======== 清空历史轨迹，为打击阶段重新记录 ========
+        print("清空历史轨迹，准备记录打击阶段路径...")
+        for uav in self.uav_dict.values():
+            uav.position_history = [uav.position.copy()]  # 只保留当前位置作为起点
+        
+        # 1. ======== 动画设置 ========
+        fig, ax = plt.subplots(figsize=(16, 12))
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_title('Swarm Mission: Attack Phase', fontsize=16, fontweight='bold')
+        ax.set_xlabel('East (m)', fontsize=12)
+        ax.set_ylabel('North (m)', fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        # 2. ======== 绘制侦察区域边界 ========
+        from matplotlib.patches import Rectangle
+        for i, area in enumerate(self.reconnaissance_areas):
+            bottom_left_x = area.center[0] - area.width / 2
+            bottom_left_y = area.center[1] - area.height / 2
+            rect = Rectangle(xy=(bottom_left_x, bottom_left_y), 
+                             width=area.width, height=area.height,
+                             color='blue', fill=False, linestyle='--', linewidth=2,
+                             label='Reconnaissance Area' if i == 0 else None)
+            ax.add_patch(rect)
+            # 添加区域标签
+            ax.text(area.center[0], area.center[1], f'Area {area.id}', 
+                    fontsize=10, ha='center', va='center', 
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+        
+        # 3. ======== 绘制敌方目标 ========
+        if self.attack_targets:
+            enemy_positions = []
+            for tgt in self.attack_targets:
+                enemy_positions.append(tgt.position[:2])
+                # 绘制目标位置
+                ax.scatter(tgt.position[0], tgt.position[1], 
+                           c='red', marker='X', s=300, linewidths=2,
+                           edgecolors='darkred', zorder=10)
+                # 添加目标标签
+                ax.text(tgt.position[0] + 100, tgt.position[1] + 100, 
+                        f'Target-{tgt.id}\n({tgt.target_type})', 
+                        fontsize=9, color='darkred', fontweight='bold',
+                        bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+            
+            # 添加图例项
+            ax.scatter([], [], c='red', marker='X', s=300, linewidths=2,
+                       edgecolors='darkred', label='Enemy Targets')
+        
+        # 4. ======== 绘制UAV的侦查结束位置（打击阶段起点） ========
+        uav_start_positions = {}
+        active_uav_count = 0
+        for uav_id, uav in self.uav_dict.items():
+            if uav.status == UAVStatus.ACTIVE:
+                uav_start_positions[uav_id] = uav.position.copy()
+                ax.scatter(uav.position[0], uav.position[1], 
+                           c='green', marker='o', s=80, alpha=0.6,
+                           edgecolors='darkgreen', linewidths=1.5, zorder=5)
+                active_uav_count += 1
+        
+        print(f"绘制了 {active_uav_count} 架活动UAV的起始位置。")
+        
+        # 添加起点图例
+        ax.scatter([], [], c='green', marker='o', s=80, alpha=0.6,
+                   edgecolors='darkgreen', linewidths=1.5,
+                   label='UAV Start (After Recon)')
+        
+        # 5. ======== 初始化UAV动态绘图元素 ========
+        uav_plots = {}
+        attack_uav_count = 0
+        for uav_id, uav in self.uav_dict.items():
+            if uav.status == UAVStatus.ACTIVE:
+                # 创建轨迹线和当前位置点
+                line, = ax.plot([], [], color='orange', linestyle='-', 
+                                linewidth=2, alpha=0.7, zorder=3)
+                point, = ax.plot(uav.position[0], uav.position[1], 'o', 
+                                 color='blue', markersize=8, 
+                                 markeredgecolor='navy', markeredgewidth=1.5, zorder=8)
+                uav_plots[uav_id] = {'line': line, 'point': point}
+                
+                # 统计被分配攻击任务的UAV
+                if uav.current_mission == MissionType.ATTACK and uav.waypoints:
+                    attack_uav_count += 1
+        
+        print(f"共 {len(uav_plots)} 架UAV将参与动画，其中 {attack_uav_count} 架被分配了攻击任务。")
+        
+        # 添加当前位置图例
+        ax.plot([], [], 'o', color='blue', markersize=8, 
+                markeredgecolor='navy', markeredgewidth=1.5,
+                label='UAV Current Position')
+        ax.plot([], [], color='orange', linestyle='-', linewidth=2, alpha=0.7,
+                label='Attack Trajectory')
+        
+        # 6. ======== 添加时间文本和状态信息 ========
+        time_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, 
+                            fontsize=12, verticalalignment='top',
+                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        status_text = ax.text(0.02, 0.92, '', transform=ax.transAxes,
+                              fontsize=10, verticalalignment='top',
+                              bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        
+        ax.legend(loc='upper right', fontsize=10)
+        ax.autoscale_view()
+        
+        # 7. ======== 定义动画更新函数 ========
+        def update(frame):
+            # 检查所有执行攻击任务的无人机是否完成
+            attacking_uavs = [uav for uav in self.uav_dict.values() 
+                              if uav.current_mission == MissionType.ATTACK 
+                              and uav.status == UAVStatus.ACTIVE]
+            
+            if attacking_uavs:
+                completed_count = sum(1 for uav in attacking_uavs if uav.is_path_complete)
+            else:
+                completed_count = 0
+            
+            # 更新所有无人机位置
+            for uav in self.uav_dict.values():
+                if uav.status == UAVStatus.ACTIVE:
+                    uav.update_position(dt)
+            
+            # 更新绘图元素
+            artists = []
+            for uav_id, uav in self.uav_dict.items():
+                if uav_id in uav_plots:
+                    plots = uav_plots[uav_id]
+                    history = np.array(uav.position_history)
+                    if len(history) > 0:
+                        plots['line'].set_data(history[:, 0], history[:, 1])
+                        plots['point'].set_data([uav.position[0]], [uav.position[1]])
+                        artists.extend([plots['line'], plots['point']])
+            
+            # 更新时间和状态信息
+            time_text.set_text(f'Simulation Time: {frame * dt:.1f}s')
+            if attacking_uavs:
+                status_text.set_text(f'Attacking UAVs: {len(attacking_uavs)}\n'
+                                     f'Completed: {completed_count}/{len(attacking_uavs)}')
+            else:
+                status_text.set_text('No attacking UAVs found')
+            artists.extend([time_text, status_text])
+            
+            # 定期调整视图
+            if frame % 50 == 0:
+                ax.relim()
+                ax.autoscale_view()
+            
+            return artists
+        
+        # 8. ======== 创建并启动动画 ========
+        ani = animation.FuncAnimation(fig, update, frames=max_steps, 
+                                       interval=interval, blit=True, repeat=False)
+        plt.show()
+        print("打击阶段动画播放完毕。")
+        self.phase_completion[MissionType.ATTACK] = True
+
 # ==================== 使用示例 ====================
 if __name__ == "__main__":
     # 为独立运行此文件而创建的 Mock Planner
@@ -992,13 +1237,15 @@ if __name__ == "__main__":
             
             # 阶段2: 侦察阶段 - 规划并合并准备+侦察路径
             mission_manager.execute_reconnaissance_phase()
-
-            # mission_manager.execute_attack_phase()
+            
+            # 注意：打击阶段的任务分配会在 animate_attack_phase 中自动执行
+            # 因为需要先模拟完侦查阶段，让UAV到达正确位置后再分配攻击任务
             
             # mission_manager.plot_results()
             
-            # 使用一个动画函数展示完整轨迹
-            mission_manager.animate_reconnaissance_phase()
+            # 可视化选项（取消注释以运行对应阶段的动画）：
+            # mission_manager.animate_reconnaissance_phase()  # 可视化侦察阶段
+            mission_manager.animate_attack_phase()  # 可视化打击阶段（会自动模拟侦查并分配攻击任务）
 
         else:
             # 【联调模式】: 初始化TCP并执行后台仿真

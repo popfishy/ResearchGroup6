@@ -185,15 +185,22 @@ class UAV:
         distance_to_move = self.current_speed * dt
         
         while distance_to_move > 0 and not self.is_path_complete:
+            # 检查是否已在或超过路径的最后一个点
             if self.path_index >= len(self.planned_path) - 1:
                 self.is_path_complete = True
-                self.position[:2] = self.planned_path[-1][:2]
+                final_point = self.planned_path[-1]
+                self.position[:2] = final_point[:2]
+                self.heading = final_point[2]
+                # 【新增】如果完成的是攻击任务，则将自身状态设为摧毁
+                if self.current_mission == MissionType.ATTACK:
+                    self.destroy()
                 break
 
-            p_start_current = self.position[:2]
+            # 获取当前线段的起点和终点
+            p_start = self.planned_path[self.path_index]
             p_end_target = self.planned_path[self.path_index][:2]
             
-            vector_to_target = p_end_target - p_start_current
+            vector_to_target = p_end_target - p_start[:2]
             distance_to_target = np.linalg.norm(vector_to_target)
 
             if distance_to_target < 1e-6:

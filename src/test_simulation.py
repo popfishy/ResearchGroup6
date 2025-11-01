@@ -15,12 +15,12 @@ from scipy.spatial.transform import Rotation as R
 from tf.transformations import euler_from_quaternion
 
 from group6_interface.msg import AgentData, AgentsData, TargetData, TargetsData, RegionData, RegionsData
-from XFD_allocation.scripts.CBPA.lib.CBPA import CBPA
-from XFD_allocation.scripts.CBPA.lib.Robot import Robot
-from XFD_allocation.scripts.CBPA.lib.Task import Task
-from XFD_allocation.scripts.CBPA.lib.Region import Region
-from XFD_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
-from XFD_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
+from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
+from xfd_allocation.scripts.CBPA.lib.Robot import Robot
+from xfd_allocation.scripts.CBPA.lib.Task import Task
+from xfd_allocation.scripts.CBPA.lib.Region import Region
+from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
+from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 
 from communication.scripts.GVF_ode import GVF_ode
 from region2cover.region_isolation import UavPath, generate_circles_in_rectangle
