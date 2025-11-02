@@ -38,6 +38,7 @@ class FormationPathResult:
     estimated_time: float
 
 class MissionType(Enum):
+    UNSET = "unset"
     PREPARATION = "preparation"
     RECONNAISSANCE = "reconnaissance"
     ATTACK = "attack"

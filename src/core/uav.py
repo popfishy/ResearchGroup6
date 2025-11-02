@@ -167,7 +167,10 @@ class UAV:
             else:
                 self._update_follower_position(dt)
         
+        MAX_HISTORY_LENGTH = 500  # 只保留最近500个点
         self.position_history.append(self.position.copy())
+        if len(self.position_history) > MAX_HISTORY_LENGTH:
+            self.position_history = self.position_history[-MAX_HISTORY_LENGTH:]
         
         # 燃料消耗（如果需要的话）
         # fuel_consumption_rate = 0.1
