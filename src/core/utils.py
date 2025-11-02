@@ -42,7 +42,6 @@ class MissionType(Enum):
     RECONNAISSANCE = "reconnaissance"
     ATTACK = "attack"
     CONTAINMENT = "containment"
-    IDLE = "idle"
 
 class TargetStatus(Enum):
     UNDETECTED = "undetected"

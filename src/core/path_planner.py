@@ -26,7 +26,6 @@ class PathPlanner:
                          waypoints: List[Tuple[float, float, float]]) -> List[np.ndarray]:
         """
         为领航者规划一条从起点依次经过所有航路点的Dubins路径。
-        【修改】: 此函数现在返回路径，而不是直接设置给无人机。
         """
         if not self.dubins_planner:
             print("Error: Dubins planner is not set in PathPlanner.")
@@ -44,7 +43,7 @@ class PathPlanner:
             )
             
             if path_segment:
-                # 【修正】确保路径点是Numpy数组，以支持向量操作
+                # 确保路径点是Numpy数组，以支持向量操作
                 full_path.extend([np.array(p) for p in path_segment])
                 # 更新当前位置为段的终点，用于下一段的起点
                 current_pos = path_segment[-1]

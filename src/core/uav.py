@@ -27,8 +27,10 @@ class UAV:
         self.current_speed = 0.0
         
         # 任务相关
-        self.current_mission = MissionType.IDLE
+        self.current_mission = MissionType.PREPARATION
         self.group_id = None
+
+        self.attack_target_position = None  # 攻击目标位置 [x, y, z]
         
         # 路径规划相关
         self.waypoints = []  # 原始航路点 (仅领航者使用)
@@ -78,7 +80,6 @@ class UAV:
         self.leader = leader
         self.formation_offset = np.array(offset) # <--- 存储偏移量
         self.waypoints = []
-        self.planned_path = []
         self.set_speed_limits(15, 45, 60)
         # print(f"UAV-{self.id} set as follower of UAV-{leader.id} with offset {self.formation_offset}")
 
@@ -89,7 +90,7 @@ class UAV:
             self.formation_target_heading = target_heading
             
     def unset_formation_roles(self):
-        """【新增】清除无人机的编队角色，使其成为独立单位。"""
+        """清除无人机的编队角色，使其成为独立单位。"""
         self.is_leader = False
         self.leader = None
         self.formation_offset = None
@@ -108,11 +109,12 @@ class UAV:
     
     def set_planned_path(self, path: List[np.ndarray]):
         """
-        【新增】直接设置已经规划好的密集路径点。
+        直接设置已经规划好的密集路径点。
         这将绕过内部的Dubins规划，用于接收来自外部规划器（如RegionCover）的路径。
         """
         self.planned_path = path
         self.current_path_index = 0
+        self.path_index = 0
         self.is_path_complete = False
         self.path_planning_complete = True # 路径已提供，视为规划完成
         print(f"UAV-{self.id} 已直接设置了包含 {len(self.planned_path)} 个点的预规划路径。")
@@ -124,7 +126,7 @@ class UAV:
         
         try:
             start_state = (self.position[0], self.position[1], self.heading)
-            self.planned_path = []
+            # self.planned_path = []
             q0 = start_state
             
             for wp in self.waypoints:
@@ -149,23 +151,28 @@ class UAV:
 
     # ==================== 仿真核心更新方法 ====================
     def update_position(self, dt: float):
-        """更新无人机位置 - 根据角色（领航者/跟随者）调用不同逻辑"""
+        """更新无人机位置 - 根据任务类型调用不同逻辑"""
         dt = dt * self.speed_multiplier
             
         if self.status != UAVStatus.ACTIVE:
             return
-
-        if self.is_leader:
-            self._update_leader_position(dt)
-        else:
-            self._update_follower_position(dt)
+        # 根据当前任务类型选择更新逻辑
+        if self.current_mission == MissionType.ATTACK:
+            self._update_attack_position(dt)
+        elif self.current_mission == MissionType.CONTAINMENT:
+            self._update_containment_position(dt)
+        elif self.current_mission == MissionType.PREPARATION or self.current_mission == MissionType.RECONNAISSANCE:
+            if self.is_leader:
+                self._update_leader_position(dt)
+            else:
+                self._update_follower_position(dt)
         
-        # 油量暂时不需要控制
+        self.position_history.append(self.position.copy())
+        
+        # 燃料消耗（如果需要的话）
         # fuel_consumption_rate = 0.1
         # self.fuel -= fuel_consumption_rate * dt
         # self.fuel = max(0.0, self.fuel)
-        
-        self.position_history.append(self.position.copy())
         
         if self.fuel <= 0 and self.status != UAVStatus.DESTROYED:
             print(f"UAV-{self.id} ran out of fuel and was destroyed.")
@@ -173,9 +180,8 @@ class UAV:
 
     def _update_leader_position(self, dt: float):
         """
-        【已修正】领航者沿着预先规划的路径移动。
+        领航者沿着预先规划的路径移动。
         在每个时间步 dt 内，从当前位置沿着路径移动 'speed * dt' 的距离。
-        速度根据位置变化反算得出，确保准确性。
         """
         if not self.path_planning_complete or self.is_path_complete:
             self.velocity = np.array([0.0, 0.0, 0.0])
@@ -186,32 +192,28 @@ class UAV:
         
         while distance_to_move > 0 and not self.is_path_complete:
             # 检查是否已在或超过路径的最后一个点
-            if self.path_index >= len(self.planned_path) - 1:
+            if self.path_index >= len(self.planned_path):
                 self.is_path_complete = True
-                final_point = self.planned_path[-1]
-                self.position[:2] = final_point[:2]
-                self.heading = final_point[2]
-                # 【新增】如果完成的是攻击任务，则将自身状态设为摧毁
-                if self.current_mission == MissionType.ATTACK:
-                    self.destroy()
                 break
 
-            # 获取当前线段的起点和终点
-            p_start = self.planned_path[self.path_index]
-            p_end_target = self.planned_path[self.path_index][:2]
-            
-            vector_to_target = p_end_target - p_start[:2]
+            # 获取当前目标点
+            current_target = self.planned_path[self.path_index]
+            vector_to_target = current_target[:2] - self.position[:2]  # 从当前位置到目标点
             distance_to_target = np.linalg.norm(vector_to_target)
 
             if distance_to_target < 1e-6:
+                # 已到达当前目标点，移动到下一个点
                 self.path_index += 1
                 continue
 
             if distance_to_move >= distance_to_target:
-                self.position[:2] = p_end_target
+                # 可以到达当前目标点
+                self.position[:2] = current_target[:2]
+                self.heading = current_target[2] if len(current_target) > 2 else self.heading
                 distance_to_move -= distance_to_target
                 self.path_index += 1
             else:
+                # 只能部分移动
                 move_vector = (vector_to_target / distance_to_target) * distance_to_move
                 self.position[:2] += move_vector
                 distance_to_move = 0
@@ -221,77 +223,163 @@ class UAV:
             self.velocity = (self.position - pos_before_update) / dt
         
         # 更新航向
-        # 【修正】只有在速度大于一个很小的阈值时才更新航向，避免在原地掉头
         if np.linalg.norm(self.velocity[:2]) > 0.1:
             self.heading = np.arctan2(self.velocity[1], self.velocity[0])
 
     def _update_follower_position(self, dt: float):
         """
-        使用比例导航制导律和一个更平滑的速度控制器，以实现稳定追踪。
+        旋翼无人机的简化跟踪控制 - 质点模型
         """
         if self.formation_target_pos is None:
-            # 没有目标，原地待命
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
-
-        # 1. 计算与目标点的几何关系
         target_pos_2d = self.formation_target_pos[:2]
         current_pos_2d = self.position[:2]
         vector_to_target = target_pos_2d - current_pos_2d
         distance_to_target = np.linalg.norm(vector_to_target)
-
-        # 【新增】当领航者到达终点后，如果跟随者也到达了指定位置附近，则停止移动，避免转圈。
-        ACCEPTANCE_RADIUS = 2.0  # 到达目标的接受半径（米）
+        # 到达判定
+        ACCEPTANCE_RADIUS = 2.0
         if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
             self.position[:2] = target_pos_2d
             self.heading = self.formation_target_heading
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
-
-        # 2. 【改进】平滑的速度控制
-        # 定义一个“减速区”，当无人机进入该区域时才开始减速
-        # 例如，减速区半径为无人机2秒的飞行距离
-        deceleration_radius = 2.0 * self.current_speed 
-        if distance_to_target < deceleration_radius:
-            # 在减速区内，速度与距离成正比
-            speed = self.current_speed * (distance_to_target / deceleration_radius)
-            # 设置一个最小速度，避免完全停下
-            speed = max(speed, self.min_speed * 0.5) 
-        else:
-            # 在减速区外，保持全速
+        if distance_to_target < 1e-6:
+            self.velocity = np.array([0.0, 0.0, 0.0])
+            return
+        # 【质点模型】直接朝目标点移动，无转弯半径限制
+        direction = vector_to_target / distance_to_target
+        
+        # 速度控制：距离远时全速，接近时减速
+        if distance_to_target > 50.0:  # 50米外全速
             speed = self.current_speed
+        else:  # 50米内线性减速
+            speed = self.current_speed * (distance_to_target / 50.0)
+            speed = max(speed, self.min_speed * 0.3)  # 保持最小速度
         
-        # 3. 【核心修正】使用比例导航制导律计算转弯角速度
-        # 计算视线角（即期望的航向）
-        desired_heading = np.arctan2(vector_to_target[1], vector_to_target[0])
+        # 直接设置速度向量
+        self.velocity[:2] = direction * speed
+        self.velocity[2] = 0.0
         
-        # 计算视线角与当前航向的误差
-        heading_error = desired_heading - self.heading
-        # 将误差归一化到 [-pi, pi]
-        heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
+        # 更新位置
+        self.position += self.velocity * dt
         
-        # 导航增益K，这是一个关键的可调参数。K=4通常效果不错。
-        PROPORTIONAL_GAIN = 4.0 
-        desired_turn_rate = PROPORTIONAL_GAIN * heading_error
+        # 更新航向（旋翼无人机可以瞬间转向）
+        self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
+    def _update_attack_position(self, dt: float):
+        """攻击任务的位置更新 - 直接前往目标位置"""
+        if self.attack_target_position is None:
+            self.velocity = np.array([0.0, 0.0, 0.0])
+            return
         
-        # 4. 施加物理约束（最大转弯角速度）
-        # omega_max = v / R
-        max_turn_rate = speed / self.turn_radius if self.turn_radius > 0 else float('inf')
-        turn_rate = np.clip(desired_turn_rate, -max_turn_rate, max_turn_rate)
+        target_pos = self.attack_target_position[:2]
+        current_pos = self.position[:2]
+        vector_to_target = target_pos - current_pos
+        distance_to_target = np.linalg.norm(vector_to_target)
         
-        # 5. 更新无人机的状态（位置和航向）
-        self.heading += turn_rate * dt
-        # 归一化航向
-        self.heading = (self.heading + np.pi) % (2 * np.pi) - np.pi
-        self.position[0] += speed * np.cos(self.heading) * dt
-        self.position[1] += speed * np.sin(self.heading) * dt
+        # 到达判定
+        ATTACK_RADIUS = 5.0  # 攻击半径
+        if distance_to_target <= ATTACK_RADIUS:
+            print(f"UAV-{self.id} 到达攻击目标位置，执行攻击")
+            self.position[:2] = target_pos
+            self.velocity = np.array([0.0, 0.0, 0.0])
+            # 可以在这里触发攻击效果或状态变化
+            return
         
-        # 更新速度向量
-        self.velocity = np.array([
-            speed * np.cos(self.heading),
-            speed * np.sin(self.heading),
-            0.0
-        ])
+        # 直接朝目标移动
+        direction = vector_to_target / distance_to_target
+        
+        # 速度控制：接近目标时减速
+        if distance_to_target > 100.0:
+            speed = self.current_speed
+        else:
+            speed = self.current_speed * max(0.3, distance_to_target / 100.0)
+        
+        # 更新速度和位置
+        self.velocity[:2] = direction * speed
+        self.velocity[2] = 0.0
+        self.position += self.velocity * dt
+        
+        # 更新航向
+        self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
+    def _update_containment_position(self, dt: float):
+        """封控任务的位置更新 - 暂时保持当前位置"""
+        # TODO: 后续实现封控巡逻逻辑
+        self.velocity = np.array([0.0, 0.0, 0.0])
+        pass
+
+
+
+    # TODO: 固定翼无人机
+    # def _update_follower_position(self, dt: float):
+    #     """
+    #     使用比例导航制导律和一个更平滑的速度控制器，以实现稳定追踪。
+    #     """
+    #     if self.formation_target_pos is None:
+    #         # 没有目标，原地待命
+    #         self.velocity = np.array([0.0, 0.0, 0.0])
+    #         return
+
+    #     # 1. 计算与目标点的几何关系
+    #     target_pos_2d = self.formation_target_pos[:2]
+    #     current_pos_2d = self.position[:2]
+    #     vector_to_target = target_pos_2d - current_pos_2d
+    #     distance_to_target = np.linalg.norm(vector_to_target)
+
+    #     # 【新增】当领航者到达终点后，如果跟随者也到达了指定位置附近，则停止移动，避免转圈。
+    #     ACCEPTANCE_RADIUS = 2.0  # 到达目标的接受半径（米）
+    #     if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
+    #         self.position[:2] = target_pos_2d
+    #         self.heading = self.formation_target_heading
+    #         self.velocity = np.array([0.0, 0.0, 0.0])
+    #         return
+
+    #     # 2. 【改进】平滑的速度控制
+    #     # 定义一个“减速区”，当无人机进入该区域时才开始减速
+    #     # 例如，减速区半径为无人机2秒的飞行距离
+    #     deceleration_radius = 2.0 * self.current_speed 
+    #     if distance_to_target < deceleration_radius:
+    #         # 在减速区内，速度与距离成正比
+    #         speed = self.current_speed * (distance_to_target / deceleration_radius)
+    #         # 设置一个最小速度，避免完全停下
+    #         speed = max(speed, self.min_speed * 0.5) 
+    #     else:
+    #         # 在减速区外，保持全速
+    #         speed = self.current_speed
+        
+    #     # 3. 【核心修正】使用比例导航制导律计算转弯角速度
+    #     # 计算视线角（即期望的航向）
+    #     desired_heading = np.arctan2(vector_to_target[1], vector_to_target[0])
+        
+    #     # 计算视线角与当前航向的误差
+    #     heading_error = desired_heading - self.heading
+    #     # 将误差归一化到 [-pi, pi]
+    #     heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
+        
+    #     # 导航增益K，这是一个关键的可调参数。K=4通常效果不错。
+    #     PROPORTIONAL_GAIN = 4.0 
+    #     desired_turn_rate = PROPORTIONAL_GAIN * heading_error
+        
+    #     # 4. 施加物理约束（最大转弯角速度）
+    #     # omega_max = v / R
+    #     max_turn_rate = speed / self.turn_radius if self.turn_radius > 0 else float('inf')
+    #     turn_rate = np.clip(desired_turn_rate, -max_turn_rate, max_turn_rate)
+        
+    #     # 5. 更新无人机的状态（位置和航向）
+    #     self.heading += turn_rate * dt
+    #     # 归一化航向
+    #     self.heading = (self.heading + np.pi) % (2 * np.pi) - np.pi
+    #     self.position[0] += speed * np.cos(self.heading) * dt
+    #     self.position[1] += speed * np.sin(self.heading) * dt
+        
+    #     # 更新速度向量
+    #     self.velocity = np.array([
+    #         speed * np.cos(self.heading),
+    #         speed * np.sin(self.heading),
+    #         0.0
+    #     ])
     
     # ==================== 其余方法 ====================
     def set_speed_multiplier(self, multiplier: float):
