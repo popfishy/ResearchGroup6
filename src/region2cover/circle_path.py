@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 class UavPath:
     def __init__(self):
         self.frequency = 30  # hz
-        self.uav_speed = 41.67  # m/s
+        self.uav_speed = 30  # m/s
 
     def generate_dubins_path(self, start, end, radius):
         # Calculate the Dubins path

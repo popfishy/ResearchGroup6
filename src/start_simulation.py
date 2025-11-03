@@ -343,7 +343,7 @@ class SwarmMissionManager:
             follower_uav.set_as_follower(leader=leader_uav, offset=relative_offset)
             follower_count += 1
             
-        print(f"{follower_count} 架无人机被设置为跟随者，将保持其初始相对位置。")
+        # print(f"{follower_count} 架无人机被设置为跟随者，将保持其初始相对位置。")
 
 
 # ==================== 阶段2: 侦查阶段 ====================
@@ -519,10 +519,12 @@ class SwarmMissionManager:
                 target = next((t for t in self.attack_targets if t.id == target_id), None)
                 
                 if target:
-                    uav.current_mission = MissionType.ATTACK
-                    uav.attack_target_position = np.array(target.position, dtype=float)
+                    uav.set_attack_target(
+                        target_position=np.array(target.position, dtype=float),
+                        use_dubins=False
+                    )
                     attack_count += 1
-                    print(f"UAV-{uav_id} 被分配攻击目标 {target_id} at ({target.position[0]:.0f}, {target.position[1]:.0f})")
+                    print(f"UAV-{uav_id} at ({uav.position[0]:.0f}, {uav.position[1]:.0f}) 被分配攻击目标 {target_id} at ({target.position[0]:.0f}, {target.position[1]:.0f})")
                 else:
                     print(f"警告: 未找到目标 {target_id}，UAV-{uav_id} 转入封控状态")
                     uav.current_mission = MissionType.CONTAINMENT
@@ -836,7 +838,6 @@ class SwarmMissionManager:
                     leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
                     if leaders and all(l.is_path_complete for l in leaders):
                         if not reconnaissance_started:
-                            print(f"\n=== TCP仿真：准备阶段完成，进入侦察阶段 ===")
                             current_phase = "RECONNAISSANCE"
                             reconnaissance_started = True
                             self.current_phase = MissionType.RECONNAISSANCE
@@ -846,7 +847,6 @@ class SwarmMissionManager:
                     leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
                     if leaders and all(l.is_path_complete for l in leaders):
                         if not attack_started:
-                            print(f"\n=== TCP仿真：侦察阶段完成，进入打击阶段 ===")
                             current_phase = "ATTACK"
                             attack_started = True
                             self.current_phase = MissionType.ATTACK
@@ -1166,7 +1166,6 @@ class SwarmMissionManager:
                 leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
                 if leaders and all(l.is_path_complete for l in leaders):
                     if not reconnaissance_started:
-                        print(f"\n=== 第{frame}帧：准备阶段完成，开始侦察阶段 ===")
                         mission_phase = "RECONNAISSANCE"
                         phase_start_frame = frame
                         reconnaissance_started = True
@@ -1179,7 +1178,6 @@ class SwarmMissionManager:
                 leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
                 if leaders and all(l.is_path_complete for l in leaders):
                     if not attack_started:
-                        print(f"\n=== 第{frame}帧：侦察阶段完成，开始打击阶段 ===")
                         mission_phase = "ATTACK"
                         phase_start_frame = frame
                         attack_started = True
@@ -1307,7 +1305,7 @@ if __name__ == "__main__":
             mission_manager.execute_reconnaissance_phase()
             
             # mission_manager.animate_reconnaissance_phase()  # 可视化侦察阶段
-            mission_manager.animate_complete_mission(max_steps=10000, dt=2, interval=50)
+            mission_manager.animate_complete_mission(max_steps=10000, dt=1.5, interval=50)
 
         else:
             # 【联调模式】: 初始化TCP并执行后台仿真

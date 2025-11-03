@@ -98,6 +98,15 @@ class UAV:
         # TODO： 后续根本需要这个来fix
         self.set_speed_limits(15, 30, 60) # min, current, max
 
+    def set_attack_target(self, target_position: np.ndarray, use_dubins: bool = False):
+        """
+        设置攻击目标并规划攻击路径
+        """
+        attack_height = self.position[2]  # 使用当前飞行高度
+        self.attack_target_position = np.array([target_position[0], target_position[1], attack_height], dtype=float)
+        self.current_mission = MissionType.ATTACK
+        self._plan_attack_path(use_dubins=use_dubins)
+
     # ==================== 领航者专用方法 ====================
     def set_waypoints(self, waypoints: List[Tuple[float, float, float]]):
         """设置航路点，触发Dubins路径规划 (主要由领航者调用)"""
@@ -148,6 +157,93 @@ class UAV:
             
         except Exception as e:
             print(f"UAV-{self.id}: Path planning failed: {e}")
+
+    def _plan_attack_path(self, use_dubins: bool = False):
+        """
+        规划攻击路径：从当前位置到攻击目标位置
+        
+        Args:
+            use_dubins: 是否使用Dubins路径规划
+        """
+        if self.attack_target_position is None:
+            print(f"UAV-{self.id}: 无法规划攻击路径，目标位置未设置")
+            return
+        
+        current_pos = self.position.copy()
+        target_pos = self.attack_target_position.copy()
+        
+        if use_dubins and self.path_planner:
+            try:
+                start_state = (current_pos[0], current_pos[1], self.heading)
+                
+                # 计算到达目标的合适航向
+                direction_vec = target_pos[:2] - current_pos[:2]
+                target_heading = np.arctan2(direction_vec[1], direction_vec[0]) if np.linalg.norm(direction_vec) > 1e-6 else self.heading
+                target_state = (target_pos[0], target_pos[1], target_heading)
+                
+                # 调用Dubins规划器
+                attack_path, _ = self.path_planner.dubins_planner.plan(start_state, target_state, self.turn_radius, PATH_STEP_SIZE)
+                
+                # 设置路径
+                self.planned_path = [np.array([p[0], p[1], p[2]]) for p in attack_path]
+                self.path_index = 0
+                self.is_path_complete = False
+                self.path_planning_complete = True
+                
+                print(f"UAV-{self.id}: 使用Dubins规划器生成攻击路径，共 {len(self.planned_path)} 个点")
+                
+            except Exception as e:
+                print(f"UAV-{self.id}: Dubins攻击路径规划失败: {e}，使用直线路径")
+                self._plan_simple_attack_path()
+        else:
+            # 使用简单直线路径（适用于旋翼无人机）
+            self._plan_simple_attack_path()
+    
+    def _plan_simple_attack_path(self):
+        """规划简单的直线攻击路径（质点模型，确保精确到达目标）"""
+        current_pos = self.position.copy()
+        target_pos = self.attack_target_position.copy()
+        
+        # 只计算XY平面的路径向量，Z轴保持不变
+        path_vector_xy = target_pos[:2] - current_pos[:2]  # 只考虑XY方向
+        path_distance = np.linalg.norm(path_vector_xy)
+        
+        if path_distance < 1e-6:
+            # 已经在目标XY位置
+            self.planned_path = [np.array([current_pos[0], current_pos[1], self.heading])]
+            self.path_index = 0
+            self.is_path_complete = True
+            self.path_planning_complete = True
+            print(f"UAV-{self.id}: 已在攻击目标位置")
+            return
+        
+        # 【修改】减小路径规划步长，提高精度
+        step_size = 10.0  # 从30米减小到10米
+        num_steps = max(1, int(path_distance / step_size))
+        
+        self.planned_path = []
+        attack_height = current_pos[2]  # 保持当前飞行高度
+        
+        for i in range(num_steps + 1):
+            ratio = min(1.0, i / num_steps)
+            # 只在XY平面内插值，Z轴保持固定
+            point_x = current_pos[0] + ratio * path_vector_xy[0]
+            point_y = current_pos[1] + ratio * path_vector_xy[1]
+            
+            # 计算该点的航向（朝向目标方向）
+            heading = np.arctan2(path_vector_xy[1], path_vector_xy[0])
+            
+            self.planned_path.append(np.array([point_x, point_y, heading]))
+        
+        # 【新增】确保最后一个点是精确的目标位置
+        final_heading = np.arctan2(path_vector_xy[1], path_vector_xy[0])
+        self.planned_path[-1] = np.array([target_pos[0], target_pos[1], final_heading])
+        
+        self.path_index = 0
+        self.is_path_complete = False
+        self.path_planning_complete = True
+        
+        print(f"UAV-{self.id}: 生成精确攻击路径，共 {len(self.planned_path)} 个点，距离 {path_distance:.1f}m")
 
     # ==================== 仿真核心更新方法 ====================
     def update_position(self, dt: float):
@@ -271,41 +367,78 @@ class UAV:
         self.heading = np.arctan2(self.velocity[1], self.velocity[0])
 
     def _update_attack_position(self, dt: float):
-        """攻击任务的位置更新 - 直接前往目标位置"""
+        """攻击任务的位置更新 - 基于路径规划，精确到达目标"""
         if self.attack_target_position is None:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
         
-        target_pos = self.attack_target_position[:2]
-        current_pos = self.position[:2]
-        vector_to_target = target_pos - current_pos
-        distance_to_target = np.linalg.norm(vector_to_target)
-        
-        # 到达判定
-        ATTACK_RADIUS = 5.0  # 攻击半径
-        if distance_to_target <= ATTACK_RADIUS:
-            print(f"UAV-{self.id} 到达攻击目标位置，执行攻击")
-            self.position[:2] = target_pos
+        # 检查是否有规划好的路径
+        if not self.path_planning_complete or not self.planned_path:
             self.velocity = np.array([0.0, 0.0, 0.0])
-            # 可以在这里触发攻击效果或状态变化
             return
         
-        # 直接朝目标移动
-        direction = vector_to_target / distance_to_target
+        # 使用与领航者相同的路径跟踪逻辑
+        pos_before_update = self.position.copy()
+        distance_to_move = self.current_speed * dt
         
-        # 速度控制：接近目标时减速
-        if distance_to_target > 100.0:
-            speed = self.current_speed
-        else:
-            speed = self.current_speed * max(0.3, distance_to_target / 100.0)
+        while distance_to_move > 0 and not self.is_path_complete:
+            # 检查是否已到达路径末端
+            if self.path_index >= len(self.planned_path):
+                # 【修改】到达路径末端时，进行最终的精确位置检查
+                final_distance = np.linalg.norm(self.position[:2] - self.attack_target_position[:2])
+                if final_distance <= 5.0:
+                    self.position[:2] = self.attack_target_position[:2]
+                    self.is_path_complete = True
+                else:
+                    print(f"UAV-{self.id} 路径完成但未精确到达目标，距离目标 {final_distance:.1f}m，继续移动")
+                    # 直接朝目标移动
+                    vector_to_target = self.attack_target_position[:2] - self.position[:2]
+                    direction = vector_to_target / np.linalg.norm(vector_to_target)
+                    move_distance = min(distance_to_move, np.linalg.norm(vector_to_target))
+                    self.position[:2] += direction * move_distance
+                    distance_to_move -= move_distance
+                break
+            
+            # 获取当前目标点
+            current_target = self.planned_path[self.path_index]
+            vector_to_target = current_target[:2] - self.position[:2]  # 只考虑XY方向
+            distance_to_target = np.linalg.norm(vector_to_target)
+            
+            PATH_POINT_RADIUS = 5.0
+            if distance_to_target < PATH_POINT_RADIUS:
+                # 到达当前路径点
+                self.position[:2] = current_target[:2]  # 只更新XY坐标
+                self.heading = current_target[2] if len(current_target) > 2 else self.heading
+                distance_to_move -= distance_to_target
+                self.path_index += 1
+            else:
+                # 向当前目标点移动
+                if distance_to_move >= distance_to_target:
+                    self.position[:2] = current_target[:2]  # 只更新XY坐标
+                    self.heading = current_target[2] if len(current_target) > 2 else self.heading
+                    distance_to_move -= distance_to_target
+                    self.path_index += 1
+                else:
+                    # 部分移动
+                    move_vector = (vector_to_target / distance_to_target) * distance_to_move
+                    self.position[:2] += move_vector  # 只更新XY坐标
+                    distance_to_move = 0
         
-        # 更新速度和位置
-        self.velocity[:2] = direction * speed
-        self.velocity[2] = 0.0
-        self.position += self.velocity * dt
+        # 计算速度
+        if dt > 0:
+            velocity_3d = (self.position - pos_before_update) / dt
+            self.velocity[:2] = velocity_3d[:2]  # 只更新XY速度
+            self.velocity[2] = 0.0  # Z轴速度始终为0
         
         # 更新航向
-        self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+        if np.linalg.norm(self.velocity[:2]) > 0.1:
+            self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+        
+        # 如果已完成攻击，停止移动
+        if self.is_path_complete:
+            self.velocity = np.array([0.0, 0.0, 0.0])
+            # 【新增】最终确认到达目标
+            final_distance = np.linalg.norm(self.position[:2] - self.attack_target_position[:2])
 
     def _update_containment_position(self, dt: float):
         """封控任务的位置更新 - 暂时保持当前位置"""
@@ -384,10 +517,6 @@ class UAV:
     #         0.0
     #     ])
     
-    # ==================== 其余方法 ====================
-    def set_speed_multiplier(self, multiplier: float):
-        self.speed_multiplier = max(0.1, multiplier)
-
     def activate(self):
         """激活无人机"""
         if self.fuel > 0:
@@ -413,100 +542,3 @@ class UAV:
             else:
                 progress = "no target"
         return f"UAV-{self.id} ({role}): pos=({self.position[0]:.1f},{self.position[1]:.1f}), {progress}, status={self.status.value}"
-
-# ==================== 测试代码 ====================
-class SimpleDubinsPlanner:
-    def plan(self, q0, q1, turning_radius, step_size):
-        try:
-            import dubins
-            path = dubins.shortest_path(q0, q1, turning_radius)
-            configurations, _ = path.sample_many(step_size)
-            return configurations, _
-        except ImportError:
-            print("Error: 'dubins' library not found. Please install it using 'pip install dubins'.")
-            return [], None
-
-class MockPathPlanner:
-    def __init__(self):
-        self.dubins_planner = SimpleDubinsPlanner()
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    # 创建一个领航者和两个跟随者
-    leader = UAV(uav_id=1, initial_position=(0, 0, 100), initial_heading=np.pi/4)
-    follower1 = UAV(uav_id=2, initial_position=(-50, 50, 100), initial_heading=np.pi/4)
-    follower2 = UAV(uav_id=3, initial_position=(50, -50, 100), initial_heading=np.pi/4)
-
-    leader.set_as_leader()
-    follower1.set_as_follower()
-    follower2.set_as_follower()
-
-    mock_planner = MockPathPlanner()
-    leader.set_path_planner(mock_planner)
-    
-    leader.activate()
-    follower1.activate()
-    follower2.activate()
-
-    waypoints = [(500, 200, 100), (500, 800, 100), (0, 500, 100)]
-    leader.set_waypoints(waypoints)
-    
-    dt = 0.1
-    for i in range(1500):
-        leader.update_position(dt)
-
-        leader_pos = leader.position
-        leader_heading = leader.heading
-        
-        dx1, dy1 = -50, -50 # 跟随者1的相对位置
-        offset1_x = dx1 * np.cos(leader_heading) - dy1 * np.sin(leader_heading)
-        offset1_y = dx1 * np.sin(leader_heading) + dy1 * np.cos(leader_heading)
-        target1_pos = (leader_pos[0] + offset1_x, leader_pos[1] + offset1_y, leader_pos[2])
-        follower1.set_formation_target(target1_pos, leader_heading)
-        
-        dx2, dy2 = 50, -50 # 跟随者2的相对位置
-        offset2_x = dx2 * np.cos(leader_heading) - dy2 * np.sin(leader_heading)
-        offset2_y = dx2 * np.sin(leader_heading) + dy2 * np.cos(leader_heading)
-        target2_pos = (leader_pos[0] + offset2_x, leader_pos[1] + offset2_y, leader_pos[2])
-        follower2.set_formation_target(target2_pos, leader_heading)
-        
-        follower1.update_position(dt)
-        follower2.update_position(dt)
-        
-        if i % 100 == 0:
-            print(f"--- Step {i} ---")
-            print(f"  {leader}")
-            print(f"  {follower1}")
-            print(f"  {follower2}")
-            
-        if leader.is_path_complete:
-            print(f"\nLeader has completed the path at step {i}.")
-            break
-            
-    # 绘图
-    plt.figure(figsize=(12, 12))
-    history_leader = np.array(leader.position_history)
-    history_f1 = np.array(follower1.position_history)
-    history_f2 = np.array(follower2.position_history)
-    
-    plt.plot(history_leader[:, 0], history_leader[:, 1], 'r-', linewidth=2, label='Leader Trajectory')
-    plt.plot(history_f1[:, 0], history_f1[:, 1], 'g--', label='Follower 1 Trajectory')
-    plt.plot(history_f2[:, 0], history_f2[:, 1], 'b--', label='Follower 2 Trajectory')
-    
-    wp_array = np.array(waypoints)
-    plt.plot(wp_array[:, 0], wp_array[:, 1], 'ko', markersize=10, label='Waypoints')
-
-    # 绘制队形快照
-    for i in range(0, len(history_leader), 150):
-        plt.plot([history_leader[i,0], history_f1[i,0]], [history_leader[i,1], history_f1[i,1]], 'k-', alpha=0.2)
-        plt.plot([history_leader[i,0], history_f2[i,0]], [history_leader[i,1], history_f2[i,1]], 'k-', alpha=0.2)
-        plt.plot([history_f1[i,0], history_f2[i,0]], [history_f1[i,1], history_f2[i,1]], 'k-', alpha=0.2)
-
-    plt.title('Leader-Follower Formation Simulation')
-    plt.xlabel('X (m)')
-    plt.ylabel('Y (m)')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')
-    plt.show()
