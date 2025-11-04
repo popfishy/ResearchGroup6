@@ -89,6 +89,9 @@ class SwarmMissionManager:
             MissionType.CONTAINMENT: False
         }
         
+        # 跟踪已报告的损毁事件，避免重复报告
+        self.reported_destructions = set()  # {(attacker_id, target_id)}
+        
         # 区域覆盖规划器
         self.region_cover_planner: Optional[RegionCover] = None
         self.reconnaissance_sub_areas_corners: List[tuple] = [] # 存储子区域角点
@@ -181,12 +184,24 @@ class SwarmMissionManager:
             print(f"错误: 区域覆盖路径生成失败: {e}")
 
         # 5. 更新封控区域定义
+        # self.containment_zones = [
+        #     ContainmentZone(
+        #         id=1,
+        #         center=(5250, -3500, 100),
+        #         width=2500,
+        #         height=7000,
+        #         patrol_altitude=100,
+        #         patrol_speed=25,
+        #         assigned_uavs=[]
+        #     )
+        # ]
+
         self.containment_zones = [
             ContainmentZone(
                 id=1,
-                center=(5250, -3500, 100),
+                center=(0, 0, 100),
                 width=2500,
-                height=7000,
+                height=2000,
                 patrol_altitude=100,
                 patrol_speed=25,
                 assigned_uavs=[]
@@ -710,6 +725,93 @@ class SwarmMissionManager:
         return circle_radius, circle_centers
     
     # ==================== 任务控制方法 ====================
+    def _check_random_destruction(self, phase: str, dt: float, destruction_probability_per_second: float = 0.0005):
+        """
+        在准备和侦查阶段检查是否有无人机被随机损毁
+        
+        参数:
+        phase: 当前阶段 ("PREPARATION" 或 "RECONNAISSANCE")
+        dt: 时间步长
+        destruction_probability_per_second: 每秒损毁概率（默认0.1%）
+        
+        返回:
+        List[Tuple[int, int]]: [(uav_id, enemy_target_id)] 损毁事件列表
+        """
+        if phase not in ["PREPARATION", "RECONNAISSANCE"]:
+            return []
+        
+        destruction_events = []
+        # 为避免侦查进度受阻，准备/侦查阶段不摧毁领航者
+        active_uavs = [
+            uav for uav in self.uav_dict.values()
+            if uav.status == UAVStatus.ACTIVE and not uav.is_leader
+        ]
+        
+        if not active_uavs:
+            return []
+        
+        # 计算每帧的损毁概率
+        probability_per_frame = destruction_probability_per_second * dt
+        
+        # 获取高威胁敌方目标（威胁级别 >= 3）
+        high_threat_targets = [tgt for tgt in self.attack_targets 
+                              if tgt.status != TargetStatus.DESTROYED and tgt.threat_level >= 3]
+        
+        # 如果没有高威胁目标，使用所有活跃目标
+        if not high_threat_targets:
+            high_threat_targets = [tgt for tgt in self.attack_targets 
+                                  if tgt.status != TargetStatus.DESTROYED]
+        
+        # 随机检查每个活跃无人机是否被损毁
+        for uav in active_uavs:
+            if np.random.random() < probability_per_frame:
+                # 选择攻击该无人机的高威胁目标
+                if high_threat_targets:
+                    attacker_target = np.random.choice(high_threat_targets)
+                    # 损毁无人机
+                    uav.destroy()
+                    print(f"【随机损毁】UAV-{uav.id} 在{phase}阶段被敌方目标 {attacker_target.id} (威胁级别{attacker_target.threat_level}) 击中并损毁")
+                    destruction_events.append((attacker_target.id, uav.id))  # (attacker_id, target_id)
+        
+        return destruction_events
+    
+    def _check_attack_completion(self):
+        """
+        检查攻击任务完成情况，并发送损毁信息
+        注意：UAV在update_position中到达目标后会自动destroy，所以这里检查DESTROYED状态的UAV
+        
+        返回:
+        List[Tuple[int, int]]: [(uav_id, target_id)] 完成的攻击任务列表
+        """
+        attack_completions = []
+        
+        for uav in self.uav_dict.values():
+            # 检查刚刚完成攻击的UAV（状态为DESTROYED，且任务为ATTACK，且有攻击目标）
+            if (uav.status == UAVStatus.DESTROYED and
+                uav.current_mission == MissionType.ATTACK and
+                uav.attack_target_position is not None):
+                
+                # 找到对应的目标
+                target = None
+                min_dist = float('inf')
+                for tgt in self.attack_targets:
+                    dist = np.linalg.norm(np.array(uav.attack_target_position[:2]) - np.array(tgt.position[:2]))
+                    if dist < min_dist:
+                        min_dist = dist
+                        target = tgt
+                
+                if target and min_dist < 5.0:
+                    # 检查是否已经报告过
+                    event_key = (uav.id, target.id)
+                    if event_key not in self.reported_destructions:
+                        # 标记目标为已摧毁
+                        target.status = TargetStatus.DESTROYED
+                        attack_completions.append((uav.id, target.id))
+                        self.reported_destructions.add(event_key)
+                        print(f"【攻击完成】UAV-{uav.id} 成功摧毁目标 {target.id}，并发送损毁信息")
+        
+        return attack_completions
+    
     def send_attack_data(self, destruction_events: Dict[int, int]):
         """
         报告并处理无人机或目标的损毁事件。
@@ -765,15 +867,6 @@ class SwarmMissionManager:
             print("损毁信息发送成功。")
         else:
             print("警告: TCP客户端未连接，无法发送损毁信息。")
-
-    def _emergency_abort(self):
-        """紧急中止任务"""
-        print("执行紧急中止程序...")
-        
-        # TODO: 让所有无人机返回基地
-        for uav_id in self.uav_dict:
-            # self.uav_dict[uav_id].return_to_base()
-            pass
     
     def get_mission_status(self) -> Dict[str, Any]:
         """获取任务状态"""
@@ -913,10 +1006,26 @@ class SwarmMissionManager:
                             target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
                             uav.set_formation_target(target_pos, leader_heading)
                 
+                # === 随机损毁检查（仅在准备和侦查阶段） ===
+                if current_phase in ["PREPARATION", "RECONNAISSANCE"]:
+                    random_destructions = self._check_random_destruction(current_phase, dt)
+                    if random_destructions:
+                        # 转换为字典格式并发送
+                        destruction_dict = {attacker_id: uav_id for attacker_id, uav_id in random_destructions}
+                        self.send_attack_data(destruction_dict)
+                
                 # 更新所有存活的无人机位置
                 for uav in self.uav_dict.values():
                     if uav.status == UAVStatus.ACTIVE:
                         uav.update_position(dt)
+                
+                # === 攻击任务完成检查 ===
+                if current_phase == "ATTACK":
+                    attack_completions = self._check_attack_completion()
+                    if attack_completions:
+                        # 转换为字典格式并发送
+                        destruction_dict = {uav_id: target_id for uav_id, target_id in attack_completions}
+                        self.send_attack_data(destruction_dict)
                 
                 # 通过TCP发布数据
                 self._publish_uav_data_to_tcp()
@@ -1207,7 +1316,7 @@ class SwarmMissionManager:
                                     plot_info['line'].set_color('gray')
                                     plot_info['point'].set_markersize(6)
             
-            # 【新增】打击阶段到封控阶段的切换
+            # 打击阶段到封控阶段的切换
             elif mission_phase == "ATTACK":
                 # 检查是否有可用于封控的UAV（存活且不是攻击任务）
                 containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
@@ -1242,7 +1351,7 @@ class SwarmMissionManager:
                             plot_info['point'].set_markersize(6)
                             plot_info['point'].set_marker('s')  # 方形标记
                     
-                    # 【新增】绘制巡逻圆
+                    # 绘制巡逻圆
                     for uav in self.uav_dict.values():
                         if (uav.current_mission == MissionType.CONTAINMENT and 
                             uav.patrol_center and uav.patrol_radius and 
@@ -1265,10 +1374,28 @@ class SwarmMissionManager:
                         
                         target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
                         uav.set_formation_target(target_pos, leader_heading)
+            
+            # TODO
+            # === 随机损毁检查（仅在准备和侦查阶段） ===
+            if mission_phase in ["PREPARATION", "RECONNAISSANCE"]:
+                random_destructions = self._check_random_destruction(mission_phase, dt)
+                if random_destructions:
+                    # 转换为字典格式并发送
+                    destruction_dict = {attacker_id: uav_id for attacker_id, uav_id in random_destructions}
+                    self.send_attack_data(destruction_dict)
+            
             # 更新所有存活的无人机位置
             for uav in self.uav_dict.values():
                 if uav.status == UAVStatus.ACTIVE:
                     uav.update_position(dt)
+            
+            # === 攻击任务完成检查 ===
+            if mission_phase == "ATTACK":
+                attack_completions = self._check_attack_completion()
+                if attack_completions:
+                    # 转换为字典格式并发送
+                    destruction_dict = {uav_id: target_id for uav_id, target_id in attack_completions}
+                    # self.send_attack_data(destruction_dict)
             
             # === 绘图更新 ===
             artists = []
@@ -1307,7 +1434,7 @@ class SwarmMissionManager:
             time_text.set_text(f'Simulation Time: {frame * dt:.1f}s')
             phase_text.set_text(f'Current Phase: {mission_phase}\n(Duration: {phase_duration:.1f}s)')
             
-            # 【修改】统计信息显示
+            # 统计信息显示
             if mission_phase == "ATTACK":
                 attacking_uavs = [uav for uav in self.uav_dict.values() if uav.current_mission == MissionType.ATTACK]
                 containment_uavs = [uav for uav in self.uav_dict.values() if uav.current_mission == MissionType.CONTAINMENT]
