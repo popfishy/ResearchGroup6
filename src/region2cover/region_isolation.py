@@ -282,29 +282,3 @@ class UavPath:
             for i in range(len(path_x)):
                 print(f"Point {i+1}: x={path_x[i]:.2f}, y={path_y[i]:.2f}, theta={path_theta[i]:.2f}")
 
-
-if __name__ == "__main__":
-    # test1
-    # cirecle_num = 150
-    # rect_width = 5000
-    # rect_height = 6500
-    # rect_center_x = 0
-    # rect_center_y = 0
-
-    # # 调用函数并获取圆心坐标
-    # centers = plot_circles_and_rectangle(
-    #     cirecle_num, rect_width, rect_height, rect_center_x, rect_center_y, is_plot=True
-    # )
-
-    # # 打印圆心坐标（如果需要）
-    # print(f"Total number of circles: {len(centers)}")
-
-    # test2
-    start_x, start_y, start_theta = 0.0, 0.0, 0.0
-    center_x, center_y, turning_radius = 100.0, 100.0, 50.0
-    circle_radius = 100
-
-    uav_path = UavPath()
-    uav_path.calculate_path(
-        start_x, start_y, start_theta, center_x, center_y, circle_radius, turning_radius, plt_figure=True
-    )
