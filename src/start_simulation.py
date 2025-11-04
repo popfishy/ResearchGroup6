@@ -186,7 +186,7 @@ class SwarmMissionManager:
                 center=(5250, -3500, 100),
                 width=2500,
                 height=7000,
-                patrol_altitude=150,
+                patrol_altitude=100,
                 patrol_speed=25,
                 assigned_uavs=[]
             )
@@ -225,10 +225,6 @@ class SwarmMissionManager:
         self.attack_targets = scenario_data.get('enemies', [])
         print(f"成功加载 {len(self.attack_targets)} 个敌方目标。")
 
-        # TODO:打印敌方目标信息
-        # for target in self.attack_targets:
-        #     print(f"敌方目标: {target.id}, 类型: {target.target_type}, 位置: {target.position}")
-
         # 3. 动态配置编队信息
         self.group_assignments = scenario_data.get('uav_groups', {})
         self.total_uavs = len(self.uav_dict)
@@ -244,7 +240,6 @@ class SwarmMissionManager:
                 print(f"编队 {group_id} (共 {len(area.assigned_uavs)} 架) 分配给侦察区域 {area.id}")
         return True
 
-    
     # ! ==================== 阶段1: 准备阶段 ====================
     def execute_preparation_phase(self):
         """为准备阶段规划所有编队的集结路径"""
@@ -346,7 +341,7 @@ class SwarmMissionManager:
         # print(f"{follower_count} 架无人机被设置为跟随者，将保持其初始相对位置。")
 
 
-# ==================== 阶段2: 侦查阶段 ====================
+    # !==================== 阶段2: 侦查阶段 ====================
     def execute_reconnaissance_phase(self):
         """为侦察阶段规划并分配覆盖路径"""
         print("\n --- 进入侦查阶段 ---")
@@ -415,7 +410,7 @@ class SwarmMissionManager:
             print(f"警告: 在为区域分配覆盖路径时未找到领航者 (uav_ids: {uav_ids})。")
 
 
-    # ==================== 阶段3: 打击阶段 ====================
+    # !==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
         """执行打击阶段：解散编队，重新分配任务"""
         print("\n--- 开始打击阶段：解散编队并分配攻击任务 ---")
@@ -598,25 +593,38 @@ class SwarmMissionManager:
                 # 模拟攻击结果 (简单模型)
                 target.status = TargetStatus.ATTACKED
     
-    # ==================== 阶段4: 封控阶段 ====================
+    # !==================== 阶段4: 封控阶段 ====================
     def execute_containment_phase(self):
         """执行封控阶段：在封控区域内生成圆形巡逻区域并分配UAV"""
         print("\n--- 开始封控阶段：分配圆形巡逻任务 ---")
         self.current_phase = MissionType.CONTAINMENT
         self.phase_start_time = time.time()
         
-        # 获取需要执行封控任务的UAV
+        # 1. 存活且不执行攻击任务的UAV
+        # 2. 确保所有符合条件的UAV都被设置为CONTAINMENT状态
+        all_active_uavs = [uav for uav in self.uav_dict.values() if uav.status == UAVStatus.ACTIVE]
+        
+        # 先确保所有非攻击任务的UAV都明确设置为封控状态
+        for uav in all_active_uavs:
+            if uav.current_mission != MissionType.ATTACK:
+                uav.current_mission = MissionType.CONTAINMENT
+        
+        # 然后筛选出所有需要执行封控任务的UAV
         containment_uavs = [
-            uav for uav in self.uav_dict.values() 
-            if uav.current_mission == MissionType.CONTAINMENT and uav.status == UAVStatus.ACTIVE
+            uav for uav in all_active_uavs 
+            if uav.current_mission == MissionType.CONTAINMENT
         ]
         
         if not containment_uavs:
             print("无UAV需要执行封控任务")
+            print(f"调试信息: 总UAV数={len(self.uav_dict)}, 存活UAV数={len(all_active_uavs)}")
+            print(f"调试信息: 攻击任务UAV数={len([u for u in all_active_uavs if u.current_mission == MissionType.ATTACK])}")
+            print(f"调试信息: 其他状态UAV={[(u.id, u.current_mission.value) for u in all_active_uavs if u.current_mission != MissionType.ATTACK and u.current_mission != MissionType.CONTAINMENT]}")
             self.phase_completion[MissionType.CONTAINMENT] = True
             return
         
         print(f"共 {len(containment_uavs)} 架UAV需要执行封控任务")
+        print(f"封控UAV ID列表: {[uav.id for uav in containment_uavs]}")
         
         # 为每个封控区域分配UAV和规划巡逻路径
         for zone in self.containment_zones:
@@ -625,7 +633,7 @@ class SwarmMissionManager:
                 
             # 计算该区域需要的UAV数量
             available_count = len(containment_uavs)
-            zone_uav_count = min(available_count, 20)  # 每个区域最多20架UAV
+            zone_uav_count = min(available_count, 100)   # TODO
             
             # 分配UAV到该区域
             zone_uavs = containment_uavs[:zone_uav_count]
@@ -640,7 +648,22 @@ class SwarmMissionManager:
             for uav, (center, radius) in patrol_assignments.items():
                 uav.set_patrol_assignment(center, radius, zone.patrol_altitude)
         
-        print("封控阶段巡逻任务分配完成")
+        # 检查是否还有未分配巡逻任务的UAV
+        # if containment_uavs:
+        #     print(f"警告: 还有 {len(containment_uavs)} 架UAV未被分配到巡逻任务（封控区域已满）")
+        #     print(f"未分配UAV ID: {[uav.id for uav in containment_uavs]}")
+        #     # 为这些UAV也分配一个简单的巡逻任务（使用第一个封控区域的参数）
+        #     if self.containment_zones:
+        #         first_zone = self.containment_zones[0]
+        #         # 在第一个封控区域附近生成额外的巡逻圆
+        #         additional_patrol_assignments = self._plan_containment_patrol(first_zone, containment_uavs)
+        #         for uav, (center, radius) in additional_patrol_assignments.items():
+        #             uav.set_patrol_assignment(center, radius, first_zone.patrol_altitude)
+        
+        # 最终统计
+        assigned_count = len([uav for uav in self.uav_dict.values() 
+                              if uav.current_mission == MissionType.CONTAINMENT and uav.patrol_center is not None])
+        print(f"封控阶段巡逻任务分配完成: 共 {assigned_count} 架UAV已分配巡逻任务")
         self.phase_completion[MissionType.CONTAINMENT] = True
 
     def _plan_containment_patrol(self, zone: ContainmentZone, uavs: List[UAV]) -> Dict[UAV, Tuple[Tuple[float, float], float]]:
@@ -824,15 +847,6 @@ class SwarmMissionManager:
             print("损毁信息发送成功。")
         else:
             print("警告: TCP客户端未连接，无法发送损毁信息。")
-
-    def _emergency_abort(self):
-        """紧急中止任务"""
-        print("执行紧急中止程序...")
-        
-        # TODO: 让所有无人机返回基地
-        for uav_id in self.uav_dict:
-            # self.uav_dict[uav_id].return_to_base()
-            pass
     
     def get_mission_status(self) -> Dict[str, Any]:
         """获取任务状态"""
@@ -936,17 +950,17 @@ class SwarmMissionManager:
                             self.execute_attack_phase()
                             
                 elif current_phase == "ATTACK":
-                    attacking_uavs = [uav for uav in self.uav_dict.values() 
-                                    if uav.current_mission == MissionType.ATTACK and uav.status == UAVStatus.ACTIVE]
-                    
-                    # 【修改】检查攻击是否完成
-                    if not attacking_uavs or all(uav.status == UAVStatus.DESTROYED for uav in attacking_uavs):
-                        if not containment_started:
-                            current_phase = "CONTAINMENT"
-                            containment_started = True
-                            self.current_phase = MissionType.CONTAINMENT
-                            print(f"\n=== TCP仿真：切换到封控阶段 ===")
-                            self.execute_containment_phase()
+                    containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
+                               if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
+    
+                    # 【修正】当有可用于封控的UAV时，切换到封控阶段
+                    if containment_eligible_uavs and not containment_started:
+                        current_phase = "CONTAINMENT"
+                        containment_started = True
+                        self.current_phase = MissionType.CONTAINMENT
+                        print(f"\n=== TCP仿真：切换到封控阶段 ===")
+                        print(f"发现 {len(containment_eligible_uavs)} 架UAV可用于封控任务")
+                        self.execute_containment_phase()
                 
                 # 【新增】封控阶段逻辑
                 elif current_phase == "CONTAINMENT":
@@ -1357,47 +1371,49 @@ class SwarmMissionManager:
             
             # 【新增】打击阶段到封控阶段的切换
             elif mission_phase == "ATTACK":
-                attacking_uavs = [uav for uav in self.uav_dict.values() 
-                                if uav.current_mission == MissionType.ATTACK and uav.status == UAVStatus.ACTIVE]
-                
-                # 检查攻击是否完成（所有攻击UAV都被摧毁或到达目标）
-                if not attacking_uavs or all(uav.status == UAVStatus.DESTROYED for uav in attacking_uavs):
-                    if not containment_started:
-                        mission_phase = "CONTAINMENT"
-                        phase_start_frame = frame
-                        containment_started = True
-                        print(f"\n=== 切换到封控阶段 ===")
-                        
-                        # 执行封控阶段初始化
-                        self.execute_containment_phase()
-                        
-                        # 清理历史轨迹并更新绘图样式
-                        for uav in self.uav_dict.values():
-                            if uav.status == UAVStatus.ACTIVE:
-                                if len(uav.position_history) > 50:
-                                    uav.position_history = uav.position_history[-50:]
-                        
-                        # 更新封控UAV的绘图样式
-                        for uav_id, uav in self.uav_dict.items():
-                            if (uav_id in uav_plots and 
-                                uav.current_mission == MissionType.CONTAINMENT and 
-                                uav.status == UAVStatus.ACTIVE):
-                                plot_info = uav_plots[uav_id]
-                                plot_info['point'].set_color('darkgreen')
-                                plot_info['line'].set_color('darkgreen')
-                                plot_info['point'].set_markersize(6)
-                                plot_info['point'].set_marker('s')  # 方形标记
-                        
-                        # 【新增】绘制巡逻圆
-                        for uav in self.uav_dict.values():
-                            if (uav.current_mission == MissionType.CONTAINMENT and 
-                                uav.patrol_center and uav.patrol_radius and 
-                                uav.status == UAVStatus.ACTIVE):
-                                circle = Circle(uav.patrol_center, uav.patrol_radius, 
-                                            fill=False, color='darkgreen', linestyle=':', 
-                                            alpha=0.7, linewidth=1.5)
-                                ax.add_patch(circle)
-                                patrol_circles[uav.id] = circle
+                # 检查是否有可用于封控的UAV（存活且不是攻击任务）
+                containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
+                                                if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
+                    
+                # 当有可用于封控的UAV时，立即切换到封控阶段
+                # 注意：execute_attack_phase()已经设置了所有非攻击任务的UAV为CONTAINMENT状态
+                if containment_eligible_uavs and not containment_started:
+                    mission_phase = "CONTAINMENT"
+                    phase_start_frame = frame
+                    containment_started = True
+                    print(f"\n=== 切换到封控阶段 ===")
+                    print(f"发现 {len(containment_eligible_uavs)} 架UAV可用于封控任务")
+                    
+                    # 执行封控阶段初始化（会为所有符合条件的UAV分配巡逻任务）
+                    self.execute_containment_phase()
+                    
+                    # 清理历史轨迹并更新绘图样式
+                    for uav in self.uav_dict.values():
+                        if uav.status == UAVStatus.ACTIVE:
+                            if len(uav.position_history) > 50:
+                                uav.position_history = uav.position_history[-50:]
+                    
+                    # 更新封控UAV的绘图样式
+                    for uav_id, uav in self.uav_dict.items():
+                        if (uav_id in uav_plots and 
+                            uav.current_mission == MissionType.CONTAINMENT and 
+                            uav.status == UAVStatus.ACTIVE):
+                            plot_info = uav_plots[uav_id]
+                            plot_info['point'].set_color('darkgreen')
+                            plot_info['line'].set_color('darkgreen')
+                            plot_info['point'].set_markersize(6)
+                            plot_info['point'].set_marker('s')  # 方形标记
+                    
+                    # 【新增】绘制巡逻圆
+                    for uav in self.uav_dict.values():
+                        if (uav.current_mission == MissionType.CONTAINMENT and 
+                            uav.patrol_center and uav.patrol_radius and 
+                            uav.status == UAVStatus.ACTIVE):
+                            circle = Circle(uav.patrol_center, uav.patrol_radius, 
+                                        fill=False, color='darkgreen', linestyle=':', 
+                                        alpha=0.7, linewidth=1.5)
+                            ax.add_patch(circle)
+                            patrol_circles[uav.id] = circle
             
             # === 位置更新逻辑 ===
             if mission_phase in ["PREPARATION", "RECONNAISSANCE"]:
@@ -1533,7 +1549,7 @@ if __name__ == "__main__":
             print("场景初始化失败，程序退出。")
             exit()
             
-        # 激活所有已加载的无人机
+        # TODO：激活所有已加载的无人机   后续可以修改激活数量
         for uav in mission_manager.uav_dict.values():
             uav.activate()
 

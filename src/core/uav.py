@@ -306,9 +306,7 @@ class UAV:
         self.path_index = 0
         self.is_path_complete = False
         self.path_planning_complete = True
-      
-        print(f"UAV-{self.id}: 生成封控巡逻路径，接近阶段 {len(approach_path)} 个点，"
-              f"圆形巡逻 {len(circle_path)} 个点，总计 {len(self.patrol_path)} 个点")
+    
   
     def _plan_simple_approach_path(self, entry_point: np.ndarray, entry_heading: float):
         """规划简单的直线接近路径"""
