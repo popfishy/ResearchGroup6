@@ -429,6 +429,56 @@ class SwarmMissionManager:
         else:
             print(f"警告: 在为区域分配覆盖路径时未找到领航者 (uav_ids: {uav_ids})。")
 
+    def _detect_high_threat_targets_in_rect(self, center_xy: Tuple[float, float], half_width: float = 100.0, half_height: float = 100.0) -> List[EnemyTarget]:
+        """在以center_xy为中心的矩形范围内检测高威胁敌方目标（未被摧毁，threat_level>=3）。"""
+        cx, cy = center_xy
+        x_min, x_max = cx - half_width, cx + half_width
+        y_min, y_max = cy - half_height, cy + half_height
+        results = []
+        for tgt in self.attack_targets:
+            if tgt.status == TargetStatus.DESTROYED:
+                continue
+            if getattr(tgt, 'threat_level', 1) < 3:
+                continue
+            tx, ty = float(tgt.position[0]), float(tgt.position[1])
+            if x_min <= tx <= x_max and y_min <= ty <= y_max:
+                results.append(tgt)
+        return results
+
+    def _assign_attackers_for_targets(self, targets: List[EnemyTarget], candidate_uavs: List[UAV]):
+        """为给定目标分配最近的候选UAV执行攻击，所需数量由target.robot_need决定。"""
+        # 过滤候选UAV：必须ACTIVE、非leader、且未在ATTACK任务
+        available = [u for u in candidate_uavs if (u.status == UAVStatus.ACTIVE and not u.is_leader and u.current_mission != MissionType.ATTACK)]
+        if not available or not targets:
+            return
+        used: set = set()
+        for tgt in targets:
+            # 若目标已被摧毁则跳过
+            if tgt.status == TargetStatus.DESTROYED:
+                continue
+            need = int(getattr(tgt, 'robot_need', 1))
+            if need <= 0:
+                continue
+            # 选择距离目标最近的need架可用UAV
+            distances = []
+            txy = np.array([tgt.position[0], tgt.position[1]], dtype=float)
+            for u in available:
+                if u.id in used:
+                    continue
+                d = np.linalg.norm(np.array([u.position[0], u.position[1]]) - txy)
+                distances.append((d, u))
+            if not distances:
+                continue
+            distances.sort(key=lambda x: x[0])
+            selected = [u for _, u in distances[:need]]
+            # 分配攻击并锁定目标，避免重复分配
+            if selected:
+                for u in selected:
+                    u.set_attack_target(target_position=np.array(tgt.position, dtype=float), use_dubins=False)
+                    u.current_mission = MissionType.ATTACK
+                    used.add(u.id)
+                # 立即将目标标记为摧毁，防止后续重复指派
+                tgt.status = TargetStatus.DESTROYED
 
     # !==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
@@ -468,8 +518,6 @@ class SwarmMissionManager:
             uav.path_index = 0
             uav.is_path_complete = False
             uav.path_planning_complete = False
-        
-        print(f"已解散编队，共 {len(self.uav_dict)} 架UAV等待新任务分配。")
         
         if not self.attack_targets:
             print("未发现敌方目标，所有UAV转入封控状态。")
@@ -539,7 +587,6 @@ class SwarmMissionManager:
                         use_dubins=False
                     )
                     attack_count += 1
-                    print(f"UAV-{uav_id} at ({uav.position[0]:.0f}, {uav.position[1]:.0f}) 被分配攻击目标 {target_id} at ({target.position[0]:.0f}, {target.position[1]:.0f})")
                 else:
                     print(f"警告: 未找到目标 {target_id}，UAV-{uav_id} 转入封控状态")
                     uav.current_mission = MissionType.CONTAINMENT
@@ -639,7 +686,6 @@ class SwarmMissionManager:
             # 为每个UAV设置巡逻任务
             for uav, (center, radius) in patrol_assignments.items():
                 uav.set_patrol_assignment(center, radius, zone.patrol_altitude)
-                print(f"UAV-{uav.id} 分配巡逻任务: 中心{center}, 半径{radius:.1f}m")
         
         # 检查是否还有未分配巡逻任务的UAV
         if containment_uavs:
@@ -953,8 +999,10 @@ class SwarmMissionManager:
                 
                 # === 阶段切换逻辑 ===
                 if current_phase == "PREPARATION":
-                    leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
-                    if leaders and all(l.is_path_complete for l in leaders):
+                    leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
+                    # 由于准备与侦察路径已合并，不能等待全部完成路径；
+                    # 当任一领航者完成路径规划即可进入侦察阶段
+                    if leaders and any(l.path_planning_complete for l in leaders):
                         if not reconnaissance_started:
                             current_phase = "RECONNAISSANCE"
                             reconnaissance_started = True
@@ -962,6 +1010,27 @@ class SwarmMissionManager:
                             
                 elif current_phase == "RECONNAISSANCE":
                     leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
+                    # 在侦查阶段，非leader UAV执行本地扫描，发现高威胁目标则立即指派打击
+                    recon_targets_collected = []
+                    for uav in self.uav_dict.values():
+                        if uav.status != UAVStatus.ACTIVE or uav.is_leader:
+                            continue
+                        detections = self._detect_high_threat_targets_in_rect(
+                            center_xy=(uav.position[0], uav.position[1]), half_width=100.0, half_height=100.0
+                        )
+                        if detections:
+                            recon_targets_collected.extend(detections)
+                    if recon_targets_collected:
+                        # 去重：按target id
+                        unique_targets = {}
+                        for t in recon_targets_collected:
+                            unique_targets[t.id] = t
+                        self._assign_attackers_for_targets(list(unique_targets.values()), list(self.uav_dict.values()))
+                        # 立即检查是否已有完成的攻击并上报
+                        completions = self._check_attack_completion()
+                        if completions:
+                            destruction_dict = {uav_id: target_id for uav_id, target_id in completions}
+                            self.send_attack_data(destruction_dict)
                     if leaders and all(l.is_path_complete for l in leaders):
                         if not attack_started:
                             current_phase = "ATTACK"
@@ -973,7 +1042,7 @@ class SwarmMissionManager:
                     containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
                                if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
     
-                    # 【修正】当有可用于封控的UAV时，切换到封控阶段
+                    # 当有可用于封控的UAV时，切换到封控阶段
                     if containment_eligible_uavs and not containment_started:
                         current_phase = "CONTAINMENT"
                         containment_started = True
@@ -1066,71 +1135,6 @@ class SwarmMissionManager:
         if self.tcp_client and self.tcp_client.connected:
             print("Disconnecting TCP client...")
             self.tcp_client.disconnect()
-
-    def plot_results(self):
-        """可视化无人机初始位置、侦查区域和规划的侦查路径"""
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Rectangle
-        import numpy as np
-
-        fig, ax = plt.subplots(figsize=(16, 12))
-        ax.set_aspect('equal', adjustable='box')
-        
-        # 1. 绘制侦察区域
-        for i, area in enumerate(self.reconnaissance_areas):
-            bottom_left_x = area.center[0] - area.width / 2
-            bottom_left_y = area.center[1] - area.height / 2
-            rect = Rectangle(xy=(bottom_left_x, bottom_left_y), 
-                             width=area.width, height=area.height,
-                             color='blue', fill=False, linestyle='--', 
-                             label='Recon Area' if i == 0 else "")
-            ax.add_patch(rect)
-
-        # 2. 绘制无人机初始位置和规划轨迹
-        colors = plt.cm.jet(np.linspace(0, 1, len(self.group_assignments)))
-        group_ids = sorted(self.group_assignments.keys())
-        
-        for i, group_id in enumerate(group_ids):
-            color = colors[i]
-            is_first_uav_in_group = True # 用于确保每组只添加一个 "Start" 标签
-            
-            for uav_id in self.group_assignments[group_id]:
-                uav = self.uav_dict[uav_id]
-                
-                # 绘制初始位置
-                init_pos = uav.init_global_position
-                marker = 's' if uav.is_leader else 'o'
-                label = f'Group {group_id} Start' if is_first_uav_in_group else None
-                ax.scatter(init_pos[0], init_pos[1], color=color, marker=marker, s=50, label=label)
-                is_first_uav_in_group = False
-
-                # 绘制领航者规划路径
-                if uav.is_leader and uav.waypoints:
-                    # 准备阶段的路径（从初始位置到侦察路径起点）
-                    prep_path_start = uav.init_global_position[:2]
-                    # 【修改】使用索引访问numpy数组
-                    recon_path_start = (uav.waypoints[0][0], uav.waypoints[0][1])
-                    ax.plot([prep_path_start[0], recon_path_start[0]], 
-                            [prep_path_start[1], recon_path_start[1]], 
-                            color=color, linestyle=':', linewidth=1.2)
-
-                    # 侦察阶段的覆盖路径
-                    # 【修改】使用索引访问numpy数组
-                    recon_path_points = np.array([(p[0], p[1]) for p in uav.waypoints])
-                    ax.plot(recon_path_points[:, 0], recon_path_points[:, 1], color=color, 
-                            linewidth=2.0, label=f'Group {group_id} Path')
-
-        # 3. 绘制敌方目标位置
-        if self.attack_targets:
-            enemy_pos = np.array([tgt.position for tgt in self.attack_targets])
-            ax.scatter(enemy_pos[:, 0], enemy_pos[:, 1], c='black', marker='x', s=100, label='Enemy Targets')
-
-        ax.set_title('Planned Mission Trajectories Overview')
-        ax.set_xlabel('East (m)')
-        ax.set_ylabel('North (m)')
-        ax.legend(loc='upper right')
-        ax.grid(True)
-        plt.show()
 
     def animate_complete_mission(self, max_steps=20000, dt=0.5, interval=20):
         """可视化完整的四阶段任务：准备->侦察->打击->封控"""
@@ -1280,8 +1284,9 @@ class SwarmMissionManager:
             
             # === 阶段切换逻辑 ===
             if mission_phase == "PREPARATION":
-                leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
-                if leaders and all(l.is_path_complete for l in leaders):
+                leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
+                # 准备与侦察路径已合并：当任一领航者完成路径规划即可进入侦察阶段
+                if leaders and any(l.path_planning_complete for l in leaders):
                     if not reconnaissance_started:
                         mission_phase = "RECONNAISSANCE"
                         phase_start_frame = frame
@@ -1292,31 +1297,33 @@ class SwarmMissionManager:
             
             elif mission_phase == "RECONNAISSANCE":
                 leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
+                # 在侦查阶段，非leader UAV执行本地扫描，发现高威胁目标则立即指派打击
+                recon_targets_collected = []
+                for uav in self.uav_dict.values():
+                    if uav.status != UAVStatus.ACTIVE or uav.is_leader:
+                        continue
+                    detections = self._detect_high_threat_targets_in_rect(
+                        center_xy=(uav.position[0], uav.position[1]), half_width=100.0, half_height=100.0
+                    )
+                    if detections:
+                        recon_targets_collected.extend(detections)
+                if recon_targets_collected:
+                    unique_targets = {}
+                    for t in recon_targets_collected:
+                        unique_targets[t.id] = t
+                    self._assign_attackers_for_targets(list(unique_targets.values()), list(self.uav_dict.values()))
+                    # 检查是否有完成的攻击并上报
+                    completions = self._check_attack_completion()
+                    if completions:
+                        destruction_dict = {uav_id: target_id for uav_id, target_id in completions}
+                        # self.send_attack_data(destruction_dict)  # 动画模式下如需联调可开启
                 if leaders and all(l.is_path_complete for l in leaders):
                     if not attack_started:
                         mission_phase = "ATTACK"
                         phase_start_frame = frame
                         attack_started = True
                         self.execute_attack_phase()
-                        
-                        for uav in self.uav_dict.values():
-                            if len(uav.position_history) > 100:
-                                uav.position_history = uav.position_history[-100:]
-                        
-                        # 更新绘图样式
-                        for uav_id, uav in self.uav_dict.items():
-                            if uav_id in uav_plots:
-                                plot_info = uav_plots[uav_id]
-                                if uav.current_mission == MissionType.ATTACK:
-                                    plot_info['point'].set_color('red')
-                                    plot_info['line'].set_color('red')
-                                    plot_info['point'].set_markersize(8)
-                                elif uav.current_mission == MissionType.CONTAINMENT:
-                                    plot_info['point'].set_color('gray')
-                                    plot_info['line'].set_color('gray')
-                                    plot_info['point'].set_markersize(6)
-            
-            # 打击阶段到封控阶段的切换
+
             elif mission_phase == "ATTACK":
                 # 检查是否有可用于封控的UAV（存活且不是攻击任务）
                 containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
@@ -1382,7 +1389,7 @@ class SwarmMissionManager:
                 if random_destructions:
                     # 转换为字典格式并发送
                     destruction_dict = {attacker_id: uav_id for attacker_id, uav_id in random_destructions}
-                    self.send_attack_data(destruction_dict)
+                    # self.send_attack_data(destruction_dict)
             
             # 更新所有存活的无人机位置
             for uav in self.uav_dict.values():
@@ -1481,7 +1488,6 @@ class SwarmMissionManager:
                                     interval=interval, blit=True, repeat=False)
         plt.show()
         print("完整任务动画播放完毕。")
-
 
 # ==================== 使用示例 ====================
 if __name__ == "__main__":

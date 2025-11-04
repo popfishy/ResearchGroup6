@@ -141,7 +141,6 @@ class UAV:
         self.path_index = 0
         self.is_path_complete = False
         self.path_planning_complete = True # 路径已提供，视为规划完成
-        print(f"UAV-{self.id} 已直接设置了包含 {len(self.planned_path)} 个点的预规划路径。")
 
     def _plan_dubins_path(self):
         """使用Dubins模型规划路径 (领航者逻辑)"""
@@ -251,8 +250,6 @@ class UAV:
         self.path_index = 0
         self.is_path_complete = False
         self.path_planning_complete = True
-      
-        print(f"UAV-{self.id}: 生成精确攻击路径，共 {len(self.planned_path)} 个点，距离 {path_distance:.1f}m")
 
     def _plan_patrol_path(self):
         """规划封控巡逻路径：Dubins路径 + 圆形巡逻"""
@@ -508,8 +505,6 @@ class UAV:
                 if final_distance <= 5.0:
                     self.position[:2] = self.attack_target_position[:2]
                     self.is_path_complete = True
-                    # 攻击任务完成，模拟UAV被摧毁
-                    print(f"UAV-{self.id} 完成攻击任务，已摧毁")
                     self.destroy()  # 设置为DESTROYED状态
                     return
                 else:
