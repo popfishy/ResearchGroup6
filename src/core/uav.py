@@ -442,46 +442,87 @@ class UAV:
         if np.linalg.norm(self.velocity[:2]) > 0.1:
             self.heading = np.arctan2(self.velocity[1], self.velocity[0])
 
+    # def _update_follower_position(self, dt: float):
+    #     """旋翼无人机的简化跟踪控制 - 质点模型"""
+    #     if self.formation_target_pos is None:
+    #         self.velocity = np.array([0.0, 0.0, 0.0])
+    #         return
+    #     target_pos_2d = self.formation_target_pos[:2]
+    #     current_pos_2d = self.position[:2]
+    #     vector_to_target = target_pos_2d - current_pos_2d
+    #     distance_to_target = np.linalg.norm(vector_to_target)
+      
+    #     # 到达判定
+    #     ACCEPTANCE_RADIUS = 2.0
+    #     if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
+    #         self.position[:2] = target_pos_2d
+    #         self.heading = self.formation_target_heading
+    #         self.velocity = np.array([0.0, 0.0, 0.0])
+    #         return
+    #     if distance_to_target < 1e-6:
+    #         self.velocity = np.array([0.0, 0.0, 0.0])
+    #         return
+      
+    #     # 质点模型：直接朝目标点移动，无转弯半径限制
+    #     direction = vector_to_target / distance_to_target
+      
+    #     # 速度控制：距离远时全速，接近时减速
+    #     if distance_to_target > 50.0:  # 50米外全速
+    #         speed = self.current_speed
+    #     else:  # 50米内线性减速
+    #         speed = self.current_speed * (distance_to_target / 50.0)
+    #         speed = max(speed, self.min_speed * 0.3)  # 保持最小速度
+      
+    #     # 直接设置速度向量
+    #     self.velocity[:2] = direction * speed
+    #     self.velocity[2] = 0.0
+      
+    #     # 更新位置
+    #     self.position += self.velocity * dt
+      
+    #     # 更新航向（旋翼无人机可以瞬间转向）
+    #     self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
     def _update_follower_position(self, dt: float):
-        """旋翼无人机的简化跟踪控制 - 质点模型"""
-        if self.formation_target_pos is None:
+        """Simplified follower control logic - directly compute positions."""
+        # if self.formation_target_pos is None or not self.leader:
+        #     self.velocity = np.array([0.0, 0.0, 0.0])
+        #     return
+
+        # # Get the leader's current position
+        # leader_pos = self.leader.position
+        # # Calculate the follower's desired position using the offset
+        # desired_pos = leader_pos[:2] + self.formation_offset  # Assuming offset is in 2D
+
+        # # Update the follower's position to the desired position directly
+        # self.position[:2] = desired_pos
+        # self.heading = self.leader.heading  # Follow the leader's heading
+
+        # # Log for debug purposes
+        # print(f"UAV-{self.id} position updated to {self.position}")
+
+        # self.velocity = np.array([0.0, 0.0, 0.0])  # Stop any additional velocity since position is set
+        if self.formation_target_pos is None or not self.leader:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
-        target_pos_2d = self.formation_target_pos[:2]
-        current_pos_2d = self.position[:2]
-        vector_to_target = target_pos_2d - current_pos_2d
+    
+        # Get the leader's current position
+        leader_pos = self.leader.position
+        # Calculate the desired position
+        desired_pos = leader_pos[:2] + self.formation_offset
+    
+        # Move towards the desired position gradually
+        step_distance = self.current_speed * dt  # How far to move this step
+        vector_to_target = desired_pos - self.position[:2]
         distance_to_target = np.linalg.norm(vector_to_target)
-      
-        # 到达判定
-        ACCEPTANCE_RADIUS = 2.0
-        if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
-            self.position[:2] = target_pos_2d
-            self.heading = self.formation_target_heading
-            self.velocity = np.array([0.0, 0.0, 0.0])
-            return
-        if distance_to_target < 1e-6:
-            self.velocity = np.array([0.0, 0.0, 0.0])
-            return
-      
-        # 质点模型：直接朝目标点移动，无转弯半径限制
-        direction = vector_to_target / distance_to_target
-      
-        # 速度控制：距离远时全速，接近时减速
-        if distance_to_target > 50.0:  # 50米外全速
-            speed = self.current_speed
-        else:  # 50米内线性减速
-            speed = self.current_speed * (distance_to_target / 50.0)
-            speed = max(speed, self.min_speed * 0.3)  # 保持最小速度
-      
-        # 直接设置速度向量
-        self.velocity[:2] = direction * speed
-        self.velocity[2] = 0.0
-      
-        # 更新位置
-        self.position += self.velocity * dt
-      
-        # 更新航向（旋翼无人机可以瞬间转向）
-        self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
+        if distance_to_target > step_distance:
+            direction = vector_to_target / distance_to_target
+            self.position[:2] += direction * step_distance  # Move toward the desired position
+        else:
+            self.position[:2] = desired_pos  # Snap to desired position if close enough
+    
+        self.heading = np.arctan2(vector_to_target[1], vector_to_target[0])
 
     def _update_attack_position(self, dt: float):
         """攻击任务的位置更新 - 基于路径规划，精确到达目标"""

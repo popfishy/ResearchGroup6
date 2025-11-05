@@ -25,6 +25,9 @@ from region2cover.region_isolation import generate_circles_in_rectangle
 # False: 运行无图形界面的仿真，并通过TCP/IP发送数据
 VISUAL_DEBUG_MODE = True
 
+# 全局开关：是否启用准备/侦查阶段的随机损毁机制
+RANDOM_DESTRUCTION_ENABLED = True
+
 
 # TODO: 任务分配
 from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
@@ -35,6 +38,7 @@ from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
 from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 
 
+# TODO：记得完善指标计算过程
 O1_recognition_efficiency: float = None
 D1_planning_efficiency: float = None
 A1_attack_efficiency: float = None
@@ -64,12 +68,6 @@ class SwarmMissionManager:
         self.uav_dict: Dict[int, UAV] = {}  # ID -> UAV对象
         self.group_assignments: Dict[int, List[int]] = {}  # group_id -> [uav_ids]
         
-        # 起飞区域配置
-        self.takeoff_zones = {}
-        
-        # 队形配置
-        self.formation_configs = {}
-        self._initialize_formations()
 
         # TODO: 后续统一使用RegionList表示
         self.RegionList: list = [
@@ -106,25 +104,6 @@ class SwarmMissionManager:
         
         # 初始化任务
         self._initialize_mission_areas()
-    
-    # TODO: 1.添加其他需要的队形配置  
-    def _initialize_formations(self):
-        """初始化队形配置"""
-        square_5x5_positions = []
-        spacing = 100.0
-        for i in range(5):
-            for j in range(5):
-                x_offset = (i - 2) * spacing  # 中心对齐
-                y_offset = (j - 2) * spacing
-                square_5x5_positions.append((x_offset, y_offset))
-        
-        self.formation_configs["square_5x5"] = FormationConfig(
-            name="square_5x5",
-            formation_type="square",
-            positions=square_5x5_positions,
-            leader_index=12,  # 中心位置作为领机
-            spacing=spacing
-        )
         
     # TODO: 2.无人机飞行高度设置
     def _initialize_mission_areas(self):
@@ -178,7 +157,7 @@ class SwarmMissionManager:
         # 4. 在区域定义后立即生成所有覆盖路径
         try:
             print("--- 正在为所有子区域生成覆盖路径 ---")
-            self.region_cover_planner.cover_run(uav_velocity = 30.0, turning_radius = 50.0, log_time='sim_run', cov_width=400)
+            self.region_cover_planner.cover_run(uav_velocity = 30.0, turning_radius = 100.0, log_time='sim_run', cov_width=400)
             print(f"成功为 {len(self.region_cover_planner.all_path)} 个区域生成了覆盖路径。")
         except Exception as e:
             print(f"错误: 区域覆盖路径生成失败: {e}")
@@ -241,10 +220,6 @@ class SwarmMissionManager:
         self.attack_targets = scenario_data.get('enemies', [])
         print(f"成功加载 {len(self.attack_targets)} 个敌方目标。")
 
-        # TODO:打印敌方目标信息
-        # for target in self.attack_targets:
-        #     print(f"敌方目标: {target.id}, 类型: {target.target_type}, 位置: {target.position}")
-
         # 3. 动态配置编队信息
         self.group_assignments = scenario_data.get('uav_groups', {})
         self.total_uavs = len(self.uav_dict)
@@ -259,6 +234,54 @@ class SwarmMissionManager:
                 area.assigned_uavs = self.group_assignments[group_id]
                 print(f"编队 {group_id} (共 {len(area.assigned_uavs)} 架) 分配给侦察区域 {area.id}")
         return True
+
+    def generate_formation_offsets(self, num_followers: int, formation_type: str, parameter: float) -> List[Tuple[float, float]]:
+        """Generate follower offsets around leader at origin (0,0), excluding (0,0).
+        num_followers refers to the number of followers (leader not included).
+        """
+        if num_followers <= 0:
+            return []
+
+        offsets: List[Tuple[float, float]] = []
+
+        if formation_type == "circle":
+            radius = float(parameter)
+            angle_step = 2.0 * np.pi / max(1, num_followers)
+            for i in range(num_followers):
+                angle = i * angle_step
+                offsets.append((radius * np.cos(angle), radius * np.sin(angle)))
+
+        elif formation_type == "square":
+            spacing = float(parameter)
+            # Build a centered grid and pick nearest-to-center first, excluding (0,0)
+            # Determine grid half-size k so that ( (2k+1)^2 - 1 ) >= num_followers
+            k = 0
+            while ((2 * k + 1) ** 2 - 1) < num_followers:
+                k += 1
+            grid: List[Tuple[float, float]] = []
+            for iy in range(-k, k + 1):
+                for ix in range(-k, k + 1):
+                    if ix == 0 and iy == 0:
+                        continue
+                    grid.append((ix * spacing, iy * spacing))
+            # Sort by radius then angle for a stable, centered fill
+            def sort_key(p: Tuple[float, float]):
+                r2 = p[0] * p[0] + p[1] * p[1]
+                ang = math.atan2(p[1], p[0])
+                return (r2, ang)
+            grid.sort(key=sort_key)
+            offsets = grid[:num_followers]
+
+        else:
+            # Default to circle if unknown formation
+            radius = float(parameter)
+            angle_step = 2.0 * np.pi / max(1, num_followers)
+            for i in range(num_followers):
+                angle = i * angle_step
+                offsets.append((radius * np.cos(angle), radius * np.sin(angle)))
+
+        return offsets
+
 
     # ! ==================== 阶段1: 准备阶段 ====================
     def execute_preparation_phase(self):
@@ -286,7 +309,7 @@ class SwarmMissionManager:
                     rally_point = (start_point_state.point.getX(), start_point_state.point.getY(), 100.0)
                     print(f"\n--- 区域 {area_id} 的集结点设置为覆盖路径起点: ({rally_point[0]:.0f}, {rally_point[1]:.0f}) ---")
 
-                    self._plan_group_formation_movement(group_id_found, rally_point, "square_5x5")
+                    self._plan_group_formation_movement(group_id_found, rally_point, 'square', 200.0)
                     assigned_groups.add(group_id_found)
                 else:
                     print(f"警告: 无法为区域 {area_id} 获取覆盖路径起点，跳过编队 {group_id_found} 的准备阶段规划。")
@@ -304,63 +327,70 @@ class SwarmMissionManager:
             no_role_uavs = [uav.id for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is None]
             print(f"无角色UAV ID: {no_role_uavs[:10]}{'...' if len(no_role_uavs) > 10 else ''}")
 
-    def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str):
+
+
+    def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str, parameter: float):
         """
-        - 动态选择领航者。
-        - 根据初始位置计算并设置跟随者的相对偏移。
+        动态选择领航者并根据队形设置相应的偏移：
+        - 领航者位于队形中心，其偏移为(0,0)
+        - 其他无人机根据所选编队在领航者周围分布，且不重叠
         """
         if not self.path_planner:
-            print("警告: PathPlanner 未设置"); return
+            print("警告: PathPlanner 未设置")
+            return
+
         uav_ids = self.group_assignments.get(group_id)
         if not uav_ids:
-            print(f"警告: 编队 {group_id} 中没有无人机。"); return
-        
-        # 选择最靠近编队中心的无人机作为领航者
-        # 1. 获取编队所有无人机的初始位置
+            print(f"警告: 编队 {group_id} 中没有无人机。")
+            return
+
         group_uavs = [self.uav_dict[uid] for uid in uav_ids if uid in self.uav_dict]
         if not group_uavs:
-            print(f"警告: 编队 {group_id} 中没有有效的无人机对象。"); return
-        
+            print(f"警告: 编队 {group_id} 中没有有效的无人机对象。")
+            return
+
         positions = np.array([uav.init_global_position for uav in group_uavs])
-        
-        # 2. 计算几何中心
         centroid = np.mean(positions, axis=0)
-        
-        # 3. 找到离中心最近的无人机
         distances = np.linalg.norm(positions - centroid, axis=1)
-        leader_index = np.argmin(distances)
+        leader_index = int(np.argmin(distances))
         leader_uav = group_uavs[leader_index]
         leader_id = leader_uav.id
-        
+
         print(f"为编队 {group_id} 设置移动任务")
         print(f"UAV-{leader_id} (最靠近中心) 被选为领航者。")
-        
-        # 2. 为领航者设置角色并规划路径
-        leader_uav.set_as_leader()
-        
-        # 3. 设置所有其他无人机为跟随者，并计算其相对领航者的初始偏移
-        follower_count = 0
-        leader_init_pos = leader_uav.init_global_position # 使用初始位置计算偏移
-        for uav_id in uav_ids:
-            if uav_id == leader_id:
-                continue
-            
-            follower_uav = self.uav_dict[uav_id]
-            follower_init_pos = follower_uav.init_global_position
-            
-            # 计算初始的相对偏移 (X, Y)，这将是他们在飞行中保持的队形
-            relative_offset = (
-                follower_init_pos[0] - leader_init_pos[0],
-                follower_init_pos[1] - leader_init_pos[1]
-            )
-            
-            # 设置跟随者角色，并告知其要跟随的领航者和自己的队形偏移
-            follower_uav.set_as_follower(leader=leader_uav, offset=relative_offset)
-            follower_count += 1
-            
-        # print(f"{follower_count} 架无人机被设置为跟随者，将保持其初始相对位置。")
 
+        leader_uav.set_as_leader()  # leader at (0,0) offset implicitly
 
+        followers = [u for u in group_uavs if u.id != leader_id]
+        num_followers = len(followers)
+        if num_followers == 0:
+            print("编队仅有领航者，无需设置跟随者。")
+            return
+
+        desired_offsets = self.generate_formation_offsets(num_followers, formation_name, parameter)
+        if len(desired_offsets) != num_followers:
+            print("警告: 生成的编队偏移数量与跟随者数量不匹配，调整为最小长度。")
+        desired_offsets = desired_offsets[:num_followers]
+
+        # Greedy assignment: match each follower to the nearest available desired offset
+        remaining_offsets = desired_offsets.copy()
+        leader_init_xy = np.array(leader_uav.init_global_position[:2], dtype=float)
+        for follower in followers:
+            follower_init_xy = np.array(follower.init_global_position[:2], dtype=float)
+            rel_vec = follower_init_xy - leader_init_xy
+            # choose offset minimizing distance to initial relative position
+            best_idx = 0
+            best_dist = float('inf')
+            for idx, off in enumerate(remaining_offsets):
+                d = (rel_vec[0] - off[0]) ** 2 + (rel_vec[1] - off[1]) ** 2
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = idx
+            assigned_offset = remaining_offsets.pop(best_idx)
+            follower.set_as_follower(leader=leader_uav, offset=assigned_offset)
+
+        print("所有无人机的偏移已设置，领航者位于队形中心。")
+        
     # !==================== 阶段2: 侦查阶段 ====================
     def execute_reconnaissance_phase(self):
         """为侦察阶段规划并分配覆盖路径"""
@@ -783,6 +813,10 @@ class SwarmMissionManager:
         返回:
         List[Tuple[int, int]]: [(uav_id, enemy_target_id)] 损毁事件列表
         """
+        # 全局开关：禁用则直接不发生随机损毁
+        if not RANDOM_DESTRUCTION_ENABLED:
+            return []
+
         if phase not in ["PREPARATION", "RECONNAISSANCE"]:
             return []
         
@@ -1493,7 +1527,7 @@ class SwarmMissionManager:
 if __name__ == "__main__":
     # 为独立运行此文件而创建的 Mock Planner
     class SimpleDubinsPlanner:
-        turning_radius = 50.0
+        turning_radius = 100.0
         def plan(self, q0, q1, turning_radius, step_size):
             try:
                 import dubins
