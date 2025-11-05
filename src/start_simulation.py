@@ -253,24 +253,22 @@ class SwarmMissionManager:
 
         elif formation_type == "square":
             spacing = float(parameter)
-            # Build a centered grid and pick nearest-to-center first, excluding (0,0)
-            # Determine grid half-size k so that ( (2k+1)^2 - 1 ) >= num_followers
-            k = 0
-            while ((2 * k + 1) ** 2 - 1) < num_followers:
-                k += 1
-            grid: List[Tuple[float, float]] = []
-            for iy in range(-k, k + 1):
-                for ix in range(-k, k + 1):
-                    if ix == 0 and iy == 0:
+            # Total UAVs including leader at center
+            total_uavs = num_followers + 1
+            m = int(math.ceil(math.sqrt(total_uavs)))  # grid size m x m
+            # Compute centered grid indices: (0..m-1) with center at cx
+            cx = (m - 1) / 2.0
+            offsets_seq: List[Tuple[float, float]] = []
+            # Row-major order, skip the exact center (leader position)
+            for iy in range(m):
+                for ix in range(m):
+                    dx = (ix - cx) * spacing
+                    dy = (iy - cx) * spacing
+                    # Treat floating center as exactly (0,0)
+                    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
                         continue
-                    grid.append((ix * spacing, iy * spacing))
-            # Sort by radius then angle for a stable, centered fill
-            def sort_key(p: Tuple[float, float]):
-                r2 = p[0] * p[0] + p[1] * p[1]
-                ang = math.atan2(p[1], p[0])
-                return (r2, ang)
-            grid.sort(key=sort_key)
-            offsets = grid[:num_followers]
+                    offsets_seq.append((dx, dy))
+            offsets = offsets_seq[:num_followers]
 
         else:
             # Default to circle if unknown formation
@@ -361,7 +359,8 @@ class SwarmMissionManager:
 
         leader_uav.set_as_leader()  # leader at (0,0) offset implicitly
 
-        followers = [u for u in group_uavs if u.id != leader_id]
+        # Deterministic assignment: followers in listed order excluding leader
+        followers = [self.uav_dict[uid] for uid in uav_ids if uid != leader_id]
         num_followers = len(followers)
         if num_followers == 0:
             print("编队仅有领航者，无需设置跟随者。")
@@ -372,21 +371,8 @@ class SwarmMissionManager:
             print("警告: 生成的编队偏移数量与跟随者数量不匹配，调整为最小长度。")
         desired_offsets = desired_offsets[:num_followers]
 
-        # Greedy assignment: match each follower to the nearest available desired offset
-        remaining_offsets = desired_offsets.copy()
-        leader_init_xy = np.array(leader_uav.init_global_position[:2], dtype=float)
-        for follower in followers:
-            follower_init_xy = np.array(follower.init_global_position[:2], dtype=float)
-            rel_vec = follower_init_xy - leader_init_xy
-            # choose offset minimizing distance to initial relative position
-            best_idx = 0
-            best_dist = float('inf')
-            for idx, off in enumerate(remaining_offsets):
-                d = (rel_vec[0] - off[0]) ** 2 + (rel_vec[1] - off[1]) ** 2
-                if d < best_dist:
-                    best_dist = d
-                    best_idx = idx
-            assigned_offset = remaining_offsets.pop(best_idx)
+        # Deterministic row-major assignment to match grid sequence
+        for follower, assigned_offset in zip(followers, desired_offsets):
             follower.set_as_follower(leader=leader_uav, offset=assigned_offset)
 
         print("所有无人机的偏移已设置，领航者位于队形中心。")
