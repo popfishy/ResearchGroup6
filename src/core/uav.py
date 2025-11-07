@@ -485,23 +485,6 @@ class UAV:
 
     def _update_follower_position(self, dt: float):
         """Simplified follower control logic - directly compute positions."""
-        # if self.formation_target_pos is None or not self.leader:
-        #     self.velocity = np.array([0.0, 0.0, 0.0])
-        #     return
-
-        # # Get the leader's current position
-        # leader_pos = self.leader.position
-        # # Calculate the follower's desired position using the offset
-        # desired_pos = leader_pos[:2] + self.formation_offset  # Assuming offset is in 2D
-
-        # # Update the follower's position to the desired position directly
-        # self.position[:2] = desired_pos
-        # self.heading = self.leader.heading  # Follow the leader's heading
-
-        # # Log for debug purposes
-        # print(f"UAV-{self.id} position updated to {self.position}")
-
-        # self.velocity = np.array([0.0, 0.0, 0.0])  # Stop any additional velocity since position is set
         if self.formation_target_pos is None or not self.leader:
             self.velocity = np.array([0.0, 0.0, 0.0])
             return
@@ -518,11 +501,23 @@ class UAV:
 
         if distance_to_target > step_distance:
             direction = vector_to_target / distance_to_target
-            self.position[:2] += direction * step_distance  # Move toward the desired position
+            self.position[:2] += direction * step_distance
         else:
-            self.position[:2] = desired_pos  # Snap to desired position if close enough
-    
-        self.heading = np.arctan2(vector_to_target[1], vector_to_target[0])
+            # 直接到达目标
+            direction = vector_to_target / distance_to_target if distance_to_target > 1e-6 else np.array([0.0, 0.0])
+            self.position[:2] = desired_pos
+
+        # ✅ 统一计算速度（避免 UnboundLocalError）
+        if dt > 0:
+            velocity_xy = direction * (min(step_distance, distance_to_target) / dt)
+            self.velocity = np.array([velocity_xy[0], velocity_xy[1], 0.0])
+        else:
+            self.velocity = np.array([0.0, 0.0, 0.0])
+
+        # 更新航向
+        if np.linalg.norm(self.velocity[:2]) > 0.1:
+            self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
 
     def _update_attack_position(self, dt: float):
         """攻击任务的位置更新 - 基于路径规划，精确到达目标"""
