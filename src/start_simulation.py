@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 
-from re import T
 import numpy as np
 import time
 from typing import List, Tuple, Optional, Any, Dict
 import math
-import matplotlib
+import random
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import json
 import os
 import rospy
 
@@ -28,6 +26,10 @@ VISUAL_DEBUG_MODE = True
 # 全局开关：是否启用准备/侦查阶段的随机损毁机制
 RANDOM_DESTRUCTION_ENABLED = True
 
+# 要使用的UAV数量（None表示使用XML文件中的所有UAV）
+# 例如：20、50、100，只激活前N架UAV
+NUM_UAVS_TO_USE = 20  # 可修改为 20, 50, 100 等进行测试
+
 
 # TODO: 任务分配
 from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
@@ -42,16 +44,6 @@ from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 O1_recognition_efficiency: float = None
 D1_planning_efficiency: float = None
 A1_attack_efficiency: float = None
-
-
-def on_press(key):
-    global EXIT_PROGRAM
-    try:
-        if key.char == "q":  # 检测 'q' 键是否被按下
-            print("退出程序中...")
-            EXIT_PROGRAM = True
-    except AttributeError:
-        pass
 
 
 class SwarmMissionManager:
@@ -71,7 +63,7 @@ class SwarmMissionManager:
 
         # TODO: 后续统一使用RegionList表示
         self.RegionList: list = [
-            Region(1, [4000, 0, 100], [650, 0, 100], [6500, -7000, 100], [4000, 0-7000, 100]),
+            Region(1, [4000, 0, 100], [650, 0, 100], [6500, -7000, 100], [4000, -7000, 100]),
         ]
         
         # TODO：任务区域配置 - 需要您补充具体坐标
@@ -89,6 +81,9 @@ class SwarmMissionManager:
         
         # 跟踪已报告的损毁事件，避免重复报告
         self.reported_destructions = set()  # {(attacker_id, target_id)}
+        
+        # 存储初始化时待发送的销毁事件（用于TCP连接后发送）
+        self.pending_initial_destructions: Optional[Dict[int, int]] = None
         
         # 区域覆盖规划器
         self.region_cover_planner: Optional[RegionCover] = None
@@ -192,8 +187,15 @@ class SwarmMissionManager:
         """设置路径规划器接口"""
         self.path_planner = path_planner
 
-    def initialize_uavs_from_xml(self, xml_path: str):
-        """【新增】从XML文件加载并初始化所有无人机和敌方目标"""
+    def initialize_uavs_from_xml(self, xml_path: str, num_uavs_to_use: Optional[int] = None):
+        """
+        从XML文件加载并初始化所有无人机和敌方目标
+        
+        参数:
+        xml_path: XML场景文件路径
+        num_uavs_to_use: 要使用的UAV数量（None表示使用全部）
+                         例如：20、50、100，只激活前N架UAV
+        """
         print("\n --- 初始化无人机和敌方目标 ---")
         print(f"从 {xml_path} 加载场景")
         try:
@@ -207,32 +209,88 @@ class SwarmMissionManager:
             print(f"解析XML文件时发生错误: {e}")
             return False
 
-        uavs = scenario_data.get('uavs', [])
-        if not uavs:
+        all_uavs = scenario_data.get('uavs', [])
+        if not all_uavs:
             print("错误: XML文件中未找到可用的我方无人机！")
             return False
 
-        # 1. 填充无人机字典
-        self.uav_dict = {uav.id: uav for uav in uavs}
+        # 1. 确定要使用的UAV数量
+        if num_uavs_to_use is None:
+            num_uavs_to_use = len(all_uavs)
+        else:
+            num_uavs_to_use = min(num_uavs_to_use, len(all_uavs))
+        
+        # 只使用前N架UAV
+        uavs_to_use = all_uavs[:num_uavs_to_use]
+        self.uav_dict = {uav.id: uav for uav in uavs_to_use}
+        self.total_uavs = len(self.uav_dict)
+        print(f"XML文件中总共有 {len(all_uavs)} 架无人机，本次使用前 {num_uavs_to_use} 架。")
         print(f"成功加载 {len(self.uav_dict)} 架无人机。")
 
-        # 2. 填充敌方目标列表
-        self.attack_targets = scenario_data.get('enemies', [])
-        print(f"成功加载 {len(self.attack_targets)} 个敌方目标。")
+        # 2. 处理敌方目标：随机抽取 int(num_uavs_to_use / 6) 个目标
+        all_enemies = scenario_data.get('enemies', [])
+        num_targets_to_use = int(num_uavs_to_use / 6)
+        num_targets_to_use = min(num_targets_to_use, len(all_enemies))
+        
+        if num_targets_to_use > 0 and len(all_enemies) > 0:
+            # 随机抽取目标
+            selected_enemies = random.sample(all_enemies, num_targets_to_use)
+            self.attack_targets = selected_enemies
+            print(f"XML文件中总共有 {len(all_enemies)} 个敌方目标，随机抽取 {num_targets_to_use} 个（int({num_uavs_to_use}/6)={num_targets_to_use}）。")
+            
+            # 对于未被选中的目标，标记为已摧毁并在初始化时发送销毁消息
+            unselected_enemies = [e for e in all_enemies if e not in selected_enemies]
+            if unselected_enemies:
+                print(f"初始化时销毁 {len(unselected_enemies)} 个未被选中的敌方目标。")
+                # 使用虚拟攻击者ID（负数）表示系统初始化时销毁
+                # 为每个目标分配不同的虚拟攻击者ID，避免字典键冲突
+                destruction_events = {}
+                for idx, enemy in enumerate(unselected_enemies):
+                    enemy.status = TargetStatus.DESTROYED
+                    # 使用负数虚拟攻击者ID（-1, -2, -3...）表示系统初始化销毁
+                    virtual_attacker_id = -(idx + 1)
+                    destruction_events[virtual_attacker_id] = enemy.id
+                
+                # 发送销毁消息（如果TCP客户端已初始化）
+                if hasattr(self, 'tcp_client') and self.tcp_client and self.tcp_client.connected:
+                    self.send_attack_data(destruction_events)
+                else:
+                    # 如果TCP未连接，保存待发送的销毁事件，等待TCP连接后发送
+                    self.pending_initial_destructions = destruction_events
+                    print(f"注意: TCP客户端未连接，已标记 {len(unselected_enemies)} 个目标为已摧毁状态。")
+                    print(f"待TCP连接后发送 {len(destruction_events)} 个初始化销毁消息。")
+        else:
+            self.attack_targets = []
+            print(f"XML文件中总共有 {len(all_enemies)} 个敌方目标，但计算出的目标数量为 {num_targets_to_use}，不使用任何敌方目标。")
 
-        # 3. 动态配置编队信息
-        self.group_assignments = scenario_data.get('uav_groups', {})
-        self.total_uavs = len(self.uav_dict)
-        print(f"识别出 {len(self.group_assignments)} 个无人机编队。")
+        # 3. 重新分组：将N架UAV分成4组（忽略XML中的分组）
+        num_groups = len(self.reconnaissance_areas)  # 应该是4
+        if num_groups == 0:
+            print("错误: 未找到侦察区域，无法进行分组。")
+            return False
+        
+        # 将UAV ID列表按顺序分成4组
+        uav_ids = sorted([uav.id for uav in uavs_to_use])
+        group_size = num_uavs_to_use // num_groups
+        remainder = num_uavs_to_use % num_groups
+        
+        self.group_assignments = {}
+        start_idx = 0
+        for group_id in range(1, num_groups + 1):
+            # 前 remainder 组多分配一个UAV
+            current_group_size = group_size + (1 if group_id <= remainder else 0)
+            group_uav_ids = uav_ids[start_idx:start_idx + current_group_size]
+            self.group_assignments[group_id] = group_uav_ids
+            start_idx += current_group_size
+            print(f"编队 {group_id}: {len(group_uav_ids)} 架UAV (ID: {group_uav_ids[:5]}{'...' if len(group_uav_ids) > 5 else ''})")
 
-        # 4. 动态分配侦察任务给编队
-        # 简单策略：按编队ID从小到大，依次分配侦察区
-        group_ids = sorted(self.group_assignments.keys())
+        # 4. 将编队分配给侦察区域
         for i, area in enumerate(self.reconnaissance_areas):
-            if i < len(group_ids):
-                group_id = group_ids[i]
+            group_id = i + 1
+            if group_id in self.group_assignments:
                 area.assigned_uavs = self.group_assignments[group_id]
                 print(f"编队 {group_id} (共 {len(area.assigned_uavs)} 架) 分配给侦察区域 {area.id}")
+        
         return True
 
     def generate_formation_offsets(self, num_followers: int, formation_type: str, parameter: float) -> List[Tuple[float, float]]:
@@ -325,8 +383,6 @@ class SwarmMissionManager:
             no_role_uavs = [uav.id for uav in self.uav_dict.values() if not uav.is_leader and uav.leader is None]
             print(f"无角色UAV ID: {no_role_uavs[:10]}{'...' if len(no_role_uavs) > 10 else ''}")
 
-
-
     def _plan_group_formation_movement(self, group_id: int, target_point: tuple, formation_name: str, parameter: float):
         """
         动态选择领航者并根据队形设置相应的偏移：
@@ -377,7 +433,7 @@ class SwarmMissionManager:
 
         print("所有无人机的偏移已设置，领航者位于队形中心。")
         
-    # !==================== 阶段2: 侦查阶段 ====================
+    # ! ==================== 阶段2: 侦查阶段 ====================
     def execute_reconnaissance_phase(self):
         """为侦察阶段规划并分配覆盖路径"""
         print("\n --- 进入侦查阶段 ---")
@@ -496,7 +552,7 @@ class SwarmMissionManager:
                 # 立即将目标标记为摧毁，防止后续重复指派
                 tgt.status = TargetStatus.DESTROYED
 
-    # !==================== 阶段3: 打击阶段 ====================
+    # ! ==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
         """执行打击阶段：解散编队，重新分配任务"""
         print("\n--- 开始打击阶段：解散编队并分配攻击任务 ---")
@@ -649,7 +705,7 @@ class SwarmMissionManager:
         
         return available_uavs
     
-    # !==================== 阶段4: 封控阶段 ====================
+    # ! ==================== 阶段4: 封控阶段 ====================
     def execute_containment_phase(self):
         """执行封控阶段：在封控区域内生成圆形巡逻区域并分配UAV"""
         print("\n--- 开始封控阶段：分配圆形巡逻任务 ---")
@@ -722,7 +778,7 @@ class SwarmMissionManager:
         self.phase_completion[MissionType.CONTAINMENT] = True
 
     def _plan_containment_patrol(self, zone: ContainmentZone, uavs: List[UAV]) -> Dict[UAV, Tuple[Tuple[float, float], float]]:
-        """在封控区域内生成圆形巡逻区域，使用region_isolation.py的generate_circles_in_rectangle函数"""
+        """在封控区域内生成圆形巡逻区域"""
         
         # 调用region_isolation.py的函数生成圆形巡逻区域
         circle_num = len(uavs)
@@ -765,7 +821,7 @@ class SwarmMissionManager:
 
     def _generate_patrol_circles(self, circle_num: int, rect_width: float, rect_height: float, 
                            rect_center_x: float, rect_center_y: float) -> Tuple[float, List[Tuple[float, float]]]:
-        """使用region_isolation.py的generate_circles_in_rectangle生成圆形巡逻区域"""
+        """生成圆形巡逻区域"""
         
         # 设置圆半径范围
         min_circle_radius = 50.0   # 最小50米
@@ -786,7 +842,7 @@ class SwarmMissionManager:
         
         return circle_radius, circle_centers
     
-    # ==================== 任务控制方法 ====================
+    # ! ==================== 任务控制方法 ====================
     def _check_random_destruction(self, phase: str, dt: float, destruction_probability_per_second: float = 0.0005):
         """
         在准备和侦查阶段检查是否有无人机被随机损毁
@@ -902,18 +958,24 @@ class SwarmMissionManager:
                     print(f"UAV-{attacker_id} 摧毁了UAV-{target_id}。")
                 target_found = True
             else:
-                # 检查被摧毁的是否为敌方目标
+                # 检查被摧毁的是否为敌方目标（在attack_targets中）
                 target_to_destroy = next((tgt for tgt in self.attack_targets if tgt.id == target_id), None)
                 if target_to_destroy:
                     if target_to_destroy.status != TargetStatus.DESTROYED:
                         target_to_destroy.status = TargetStatus.DESTROYED
                         print(f"UAV-{attacker_id} 摧毁了敌方目标 {target_id}。")
                     target_found = True
+                else:
+                    # 目标不在attack_targets中（可能是初始化时未被选中的目标，已标记为DESTROYED）
+                    # 这种情况是正常的，只发送消息，不更新状态
+                    if attacker_id < 0:  # 虚拟攻击者ID（负数）表示初始化销毁
+                        print(f"系统初始化时销毁目标 {target_id}（不在当前任务列表中）。")
+                        target_found = True  # 视为已处理，不打印警告
             
             if not target_found:
-                print(f"警告: 在损毁事件中未找到目标ID {target_id}。")
+                print(f"警告: 在损毁事件中未找到目标ID {target_id}（攻击者ID: {attacker_id}）。")
 
-            # 2. 构造消息体
+            # 2. 构造消息体（无论是否找到目标，都发送消息）
             agents_list.append({
                 "drone_id": attacker_id,
                 "target_id": target_id
@@ -941,12 +1003,12 @@ class SwarmMissionManager:
             "phase_duration": time.time() - self.phase_start_time,
             "total_duration": time.time() - self.mission_start_time,
             "phase_completion": {k.value: v for k, v in self.phase_completion.items()},
-            "active_uavs": len([uav for uav in self.uav_dict.values()]),  # TODO: 检查实际状态
+            "active_uavs": len(self.uav_dict),
             "detected_targets": len(self.attack_targets),
             "containment_zones": len(self.containment_zones)
         }
     
-    # ==================== TCP/IP通信方法 ====================
+    # ! ==================== TCP/IP通信方法 ====================
     def _initialize_tcp_client(self):
         """初始化TCP客户端"""
         SERVER_HOST = '10.66.1.93'
@@ -956,6 +1018,12 @@ class SwarmMissionManager:
         if not self.tcp_client.connect():
             print(f"警告: TCP连接失败, 数据将不会被发布.")
             self.tcp_client = None
+        else:
+            # TCP连接成功后，发送初始化时待发送的销毁消息
+            if self.pending_initial_destructions:
+                print(f"TCP连接成功，发送 {len(self.pending_initial_destructions)} 个初始化销毁消息。")
+                self.send_attack_data(self.pending_initial_destructions)
+                self.pending_initial_destructions = None  # 清空待发送列表
 
     def _publish_uav_data_to_tcp(self):
         """将所有无人机的状态数据通过TCP发布"""
@@ -1509,6 +1577,67 @@ class SwarmMissionManager:
         plt.show()
         print("完整任务动画播放完毕。")
 
+    # ! ==================== 指标计算 ====================
+    def compute_metrics_reference(
+        self, detect_start_time: Optional[float],
+        detect_end_time_map: Dict[int, float],  # area_id -> end_ts（或 target_id -> end_ts）
+        # 打击相关
+        attack_start_time_map: Dict[int, float],  # target_id -> start_ts
+        attack_end_time_map: Dict[int, float],    # target_id -> end_ts
+        # 其他
+        total_target_num: int,
+        det_reward_weight: float = 200.0,
+        atk_reward_weight: float = 100.0,
+        decay_rate: float = 0.03,
+    ) -> Tuple[float, float, float]:
+        """
+        返回: (O1_recognition_efficiency, D1_planning_efficiency, A1_attack_efficiency)
+        可将 detect_end_time_map 理解为“识别完成事件集合”（区域或目标层级皆可）。
+        """
+
+        # O1: 识别效率
+        if detect_start_time is not None and detect_end_time_map:
+            recognized_num = len(detect_end_time_map)
+            total_recognition_time = sum(
+                max(0.0, end_ts - detect_start_time) for end_ts in detect_end_time_map.values()
+            )
+            O1 = (recognized_num / total_recognition_time) if total_recognition_time > 0 else 0.0
+        else:
+            O1 = 0.0
+
+        # D1: 指数衰减收益 + 加权融合
+        def calculate_efficiency(t: float, w0: float, r: float) -> float:
+            return w0 * math.exp(-r * max(0.0, t))
+
+        det_reward_total = 0.0
+        if detect_start_time is not None and detect_end_time_map:
+            for end_ts in detect_end_time_map.values():
+                det_reward_total += calculate_efficiency(end_ts - detect_start_time, det_reward_weight, decay_rate)
+
+        atk_reward_total = 0.0
+        for tid, s in attack_start_time_map.items():
+            e = attack_end_time_map.get(tid)
+            if e is not None:
+                atk_reward_total += calculate_efficiency(e - s, atk_reward_weight, decay_rate)
+
+        target_num = max(1, total_target_num)
+        alpha = target_num / (target_num + 4.0)
+        D1 = alpha * det_reward_total + (1.0 - alpha) * atk_reward_total
+
+        # A1: 打击效率
+        completed_ids = [tid for tid in attack_end_time_map.keys() if tid in attack_start_time_map]
+        attack_num = len(completed_ids)
+        if completed_ids:
+            min_start = min(attack_start_time_map[tid] for tid in completed_ids)
+            max_end = max(attack_end_time_map[tid] for tid in completed_ids)
+            total_attack_span = max(0.0, max_end - min_start)
+            A1 = (attack_num / total_attack_span) if total_attack_span > 0 else 0.0
+        else:
+            A1 = 0.0
+
+        return O1, D1, A1
+
+
 # ==================== 使用示例 ====================
 if __name__ == "__main__":
     # 为独立运行此文件而创建的 Mock Planner
@@ -1533,10 +1662,11 @@ if __name__ == "__main__":
         mission_manager.set_path_planner(path_planner)
         
         print("=== 开始无人机集群任务仿真（从XML加载） ===")
+        print(f"配置: 使用 {NUM_UAVS_TO_USE if NUM_UAVS_TO_USE else '全部'} 架UAV")
         
         # --- 3. 从XML文件初始化场景 ---
         xml_file_path = '山地丛林.xml'
-        if not mission_manager.initialize_uavs_from_xml(xml_file_path):
+        if not mission_manager.initialize_uavs_from_xml(xml_file_path, num_uavs_to_use=NUM_UAVS_TO_USE):
             print("场景初始化失败，程序退出。")
             exit()
             

@@ -125,9 +125,9 @@ class ScenarioParser:
     def _estimate_robot_need(self, name: str) -> int:
         """根据目标名称简单评估需要多少uav进行攻击"""
         name = name.lower()
-        if '爱国者' in name : return 3
+        if '爱国者' in name : return 4
         if '干扰' in name: return 2
-        if '装甲车' in name: return 1
-        if '哨所' in name: return 2
+        if '装甲车' in name: return 2
+        if '哨所' in name: return 1
         if '士兵' in name: return 1
         return 1
