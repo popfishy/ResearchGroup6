@@ -19,20 +19,6 @@ from communication.scripts.tcp_client_communication import TCPClient
 from region2cover.region_cover import RegionCover
 from region2cover.region_isolation import generate_circles_in_rectangle
 
-# ==================== 全局配置 ====================
-# True:  运行本地Matplotlib可视化进行调试
-# False: 运行无图形界面的仿真，并通过TCP/IP发送数据
-VISUAL_DEBUG_MODE = False
-
-# 全局开关：是否启用准备/侦查阶段的随机损毁机制
-RANDOM_DESTRUCTION_ENABLED = False
-
-# 要使用的UAV数量（None表示使用XML文件中的所有UAV）
-# 例如：20、50、100，只激活前N架UAV
-NUM_UAVS_TO_USE = 50  # 可修改为 20, 50, 100 等进行测试
-
-
-# TODO: 任务分配
 from xfd_allocation.scripts.CBPA.lib.CBPA import CBPA
 from xfd_allocation.scripts.CBPA.lib.Robot import Robot
 from xfd_allocation.scripts.CBPA.lib.Task import Task
@@ -40,19 +26,46 @@ from xfd_allocation.scripts.CBPA.lib.Region import Region
 from xfd_allocation.scripts.CBPA.lib.WorldInfo import WorldInfo
 from xfd_allocation.scripts.CBPA.lib.CBPA_REC import CBPA_REC
 
+from evaluate import write_results_to_excel
 
-# TODO：记得完善指标计算过程
-O1_recognition_efficiency: float = None
-D1_planning_efficiency: float = None
-A1_attack_efficiency: float = None
+# ==================== 全局配置 ====================
+# True:  运行本地Matplotlib可视化进行调试
+# False: 运行无图形界面的仿真，并通过TCP/IP发送数据
+VISUAL_DEBUG_MODE = False
 
+# 要使用的UAV数量（None表示使用XML文件中的所有UAV）
+# 例如：20、50、100，只激活前N架UAV
+NUM_UAVS_TO_USE = 50  # 可修改为 20, 50, 100 等进行测试
+
+# 全局开关：是否启用准备/侦查阶段的随机损毁机制
+RANDOM_DESTRUCTION_ENABLED = True
+# 损毁比例
+DAMAGE_RATIO = 0.0
+
+SIMULATION_DT = 4  # 仿真时间步长（秒），对应4Hz更新频率
+TCP_PUBLISH_RATE = 4.0  # TCP数据发布频率（Hz）
+
+random.seed(42)
 
 class SwarmMissionManager:
     """50架无人机集群任务管理器"""
     
     def __init__(self):
+        # 性能指标数据收集
+        self.detect_start_time: Optional[float] = None      # 识别开始时间
+        self.detect_end_time_map: Dict[int, float] = {}     # 目标ID -> 识别完成时间
+        self.attack_start_time_map: Dict[int, float] = {}   # 目标ID -> 攻击开始时间
+        self.attack_end_time_map: Dict[int, float] = {}     # 目标ID -> 攻击完成时间
+        self.total_target_num: int = 0                      # 总目标数
+        self.attack_assigned_uav_ids: set = set()           # 曾被分配攻击任务的UAV
+
+        # 性能指标存储
+        self.O1_recognition_efficiency: float = 0.0
+        self.D1_planning_efficiency: float = 0.0
+        self.A1_attack_efficiency: float = 0.0
+
         # 基本配置
-        self.total_uavs:int = 50
+        self.total_uavs:int = NUM_UAVS_TO_USE
         self.current_phase = MissionType.PREPARATION
         self.phase_start_time = time.time()
         self.mission_start_time = time.time()
@@ -502,7 +515,7 @@ class SwarmMissionManager:
         else:
             print(f"警告: 在为区域分配覆盖路径时未找到领航者 (uav_ids: {uav_ids})。")
 
-    def _detect_high_threat_targets_in_rect(self, center_xy: Tuple[float, float], half_width: float = 100.0, half_height: float = 100.0) -> List[EnemyTarget]:
+    def _detect_high_threat_targets_in_rect(self, center_xy: Tuple[float, float], half_width: float = 150.0, half_height: float = 150.0) -> List[EnemyTarget]:
         """在以center_xy为中心的矩形范围内检测高威胁敌方目标（未被摧毁，threat_level>=3）。"""
         cx, cy = center_xy
         x_min, x_max = cx - half_width, cx + half_width
@@ -515,6 +528,11 @@ class SwarmMissionManager:
                 continue
             tx, ty = float(tgt.position[0]), float(tgt.position[1])
             if x_min <= tx <= x_max and y_min <= ty <= y_max:
+                if tgt.id not in self.detect_end_time_map:
+                    if self.detect_start_time is None:
+                        self.detect_start_time = time.time()
+                    self.detect_end_time_map[tgt.id] = time.time()
+                    print(f"【目标识别】目标 {tgt.id} 在 {self.detect_end_time_map[tgt.id]:.2f}s 被识别")
                 results.append(tgt)
         return results
 
@@ -530,6 +548,11 @@ class SwarmMissionManager:
             if tgt.status == TargetStatus.DESTROYED:
                 continue
             need = int(getattr(tgt, 'robot_need', 1))
+
+            if tgt.id not in self.attack_start_time_map:
+                self.attack_start_time_map[tgt.id] = time.time()
+                print(f"【攻击开始】目标 {tgt.id} 在 {self.attack_start_time_map[tgt.id]:.2f}s 开始攻击")
+
             if need <= 0:
                 continue
             # 选择距离目标最近的need架可用UAV
@@ -552,6 +575,8 @@ class SwarmMissionManager:
                     used.add(u.id)
                 # 立即将目标标记为摧毁，防止后续重复指派
                 tgt.status = TargetStatus.DESTROYED
+
+        self.total_target_num = len(self.attack_targets)
 
     # ! ==================== 阶段3: 打击阶段 ====================
     def execute_attack_phase(self):
@@ -672,6 +697,10 @@ class SwarmMissionManager:
         print(f"任务分配完成: {attack_count} 架UAV执行攻击任务, {containment_count} 架UAV执行封控任务")
         self.phase_completion[MissionType.ATTACK] = True
 
+        # 记录所有被分配攻击任务的UAV
+        for uav_id in attack_assignments.keys():
+            self.attack_assigned_uav_ids.add(uav_id)
+
     def _convert_uav_to_robot(self, uav: UAV) -> Robot:
         """将UAV对象转换为xfd_allocation库所需的Robot对象"""
         robot = Robot()
@@ -777,6 +806,7 @@ class SwarmMissionManager:
                               if uav.current_mission == MissionType.CONTAINMENT and uav.patrol_center is not None])
         print(f"封控阶段巡逻任务分配完成: 共 {assigned_count} 架UAV已分配巡逻任务")
         self.phase_completion[MissionType.CONTAINMENT] = True
+        
 
     def _plan_containment_patrol(self, zone: ContainmentZone, uavs: List[UAV]) -> Dict[UAV, Tuple[Tuple[float, float], float]]:
         """在封控区域内生成圆形巡逻区域"""
@@ -844,26 +874,38 @@ class SwarmMissionManager:
         return circle_radius, circle_centers
     
     # ! ==================== 任务控制方法 ====================
-    def _check_random_destruction(self, phase: str, dt: float, destruction_probability_per_second: float = 0.0005):
+    def _check_random_destruction(self, phase: str, dt: float):
         """
         在准备和侦查阶段检查是否有无人机被随机损毁
         
         参数:
         phase: 当前阶段 ("PREPARATION" 或 "RECONNAISSANCE")
         dt: 时间步长
-        destruction_probability_per_second: 每秒损毁概率（默认0.1%）
         
         返回:
-        List[Tuple[int, int]]: [(uav_id, enemy_target_id)] 损毁事件列表
+        List[Tuple[int, int]]: [(attacker_id, target_id)] 损毁事件列表
         """
-        # 全局开关：禁用则直接不发生随机损毁
         if not RANDOM_DESTRUCTION_ENABLED:
+            return []
+
+        if DAMAGE_RATIO <= 0.0:
             return []
 
         if phase not in ["PREPARATION", "RECONNAISSANCE"]:
             return []
         
         destruction_events = []
+        
+        # 计算当前已损毁的UAV数量
+        destroyed_uavs = [uav for uav in self.uav_dict.values() if uav.status == UAVStatus.DESTROYED]
+        
+        # 计算最大允许损毁数量（基于DAMAGE_RATIO）
+        max_allowed_destructions = int(len(self.uav_dict) * DAMAGE_RATIO)
+        
+        # 如果已达到损毁上限，不再损毁
+        if len(destroyed_uavs) >= max_allowed_destructions:
+            return []
+        
         # 为避免侦查进度受阻，准备/侦查阶段不摧毁领航者
         active_uavs = [
             uav for uav in self.uav_dict.values()
@@ -873,21 +915,24 @@ class SwarmMissionManager:
         if not active_uavs:
             return []
         
-        # 计算每帧的损毁概率
-        probability_per_frame = destruction_probability_per_second * dt
-        
         # 获取高威胁敌方目标（威胁级别 >= 3）
         high_threat_targets = [tgt for tgt in self.attack_targets 
-                              if tgt.status != TargetStatus.DESTROYED and tgt.threat_level >= 3]
+                            if tgt.status != TargetStatus.DESTROYED and tgt.threat_level >= 3]
         
         # 如果没有高威胁目标，使用所有活跃目标
         if not high_threat_targets:
             high_threat_targets = [tgt for tgt in self.attack_targets 
-                                  if tgt.status != TargetStatus.DESTROYED]
+                                if tgt.status != TargetStatus.DESTROYED]
+        
+        # 计算威胁因子（0.5 到 3.0 之间）
+        threat_factor = 0.5 + min(len(high_threat_targets) * 0.0035, 2.5)
+        
+        # 计算每帧损毁概率（上限为0.1，避免单帧损毁过多）
+        destruction_probability_per_frame = min(DAMAGE_RATIO * threat_factor * dt * 0.1, 0.1)
         
         # 随机检查每个活跃无人机是否被损毁
         for uav in active_uavs:
-            if np.random.random() < probability_per_frame:
+            if np.random.random() < destruction_probability_per_frame:
                 # 选择攻击该无人机的高威胁目标
                 if high_threat_targets:
                     attacker_target = np.random.choice(high_threat_targets)
@@ -929,6 +974,12 @@ class SwarmMissionManager:
                     if event_key not in self.reported_destructions:
                         # 标记目标为已摧毁
                         target.status = TargetStatus.DESTROYED
+
+                        # 记录攻击完成时间（首次完成时）
+                        if target.id not in self.attack_end_time_map:
+                            self.attack_end_time_map[target.id] = time.time()
+                            print(f"【攻击完成】目标 {target.id} 在 {self.attack_end_time_map[target.id]:.2f}s 被摧毁")
+
                         attack_completions.append((uav.id, target.id))
                         self.reported_destructions.add(event_key)
                         print(f"【攻击完成】UAV-{uav.id} 成功摧毁目标 {target.id}，并发送损毁信息")
@@ -1037,7 +1088,8 @@ class SwarmMissionManager:
     # ! ==================== TCP/IP通信方法 ====================
     def _initialize_tcp_client(self):
         """初始化TCP客户端"""
-        SERVER_HOST = '10.66.1.93'
+        # SERVER_HOST = '10.66.1.93'  中电普信
+        SERVER_HOST = '10.66.1.86'   # 湖大
         SERVER_PORT = 13334
         CLIENT_IP = '10.66.1.192'
         self.tcp_client = TCPClient(host=SERVER_HOST, port=SERVER_PORT, client_ip=CLIENT_IP)
@@ -1054,8 +1106,8 @@ class SwarmMissionManager:
     # TODO：注意，uav的速度不能为0,否则上层仿真不会更新uav位置
     def _publish_uav_data_to_tcp(self):
         """将所有无人机的状态数据通过TCP发布"""
-        if not self.tcp_client or not self.pos_converter:
-            return
+        # if not self.tcp_client or not self.pos_converter:
+        #     return
 
         # 1. 构造JSON数据结构
         multi_path = []
@@ -1100,40 +1152,45 @@ class SwarmMissionManager:
         except Exception as e:
             print(f"保存数据到文件 {filename} 时发生错误: {e}")
 
-    # TODO:控制频率和更新dt需要调整
-    def run_tcp_simulation(self, frequency=4.0):
+    def run_tcp_simulation(self):
         """
         运行完整的四阶段TCP仿真循环。
         自动进行阶段切换：准备->侦察->打击->封控
         """
-        print(f"--- 开始完整四阶段TCP仿真循环 (频率: {frequency}Hz) ---")
-        dt = 1.0 / frequency
+        frequency = TCP_PUBLISH_RATE  # 使用统一的发布频率
+        dt = SIMULATION_DT  # 使用统一的仿真步长
+        
+        print(f"--- 开始完整四阶段TCP仿真循环 (频率: {frequency}Hz, dt: {dt}s) ---")
         
         # 阶段控制变量
         current_phase = "PREPARATION"
         reconnaissance_started = False
         attack_started = False
-        containment_started = False  # 【新增】
+        containment_started = False
+        
+        # TCP发布频率控制
+        tcp_publish_interval = 1.0 / frequency
+        last_tcp_publish_time = time.time()
         
         try:
             frame_count = 0
             while not rospy.is_shutdown():
                 loop_start_time = time.time()
-                
+            
                 # === 阶段切换逻辑 ===
                 if current_phase == "PREPARATION":
                     leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
-                    # 由于准备与侦察路径已合并，不能等待全部完成路径；
-                    # 当任一领航者完成路径规划即可进入侦察阶段
                     if leaders and any(l.path_planning_complete for l in leaders):
                         if not reconnaissance_started:
                             current_phase = "RECONNAISSANCE"
                             reconnaissance_started = True
                             self.current_phase = MissionType.RECONNAISSANCE
-                            
+                            print(f"\n=== 切换到侦察阶段 ===")
+                
                 elif current_phase == "RECONNAISSANCE":
                     leaders = [uav for uav in self.uav_dict.values() if uav.is_leader and uav.path_planning_complete]
-                    # 在侦查阶段，非leader UAV执行本地扫描，发现高威胁目标则立即指派打击
+                    
+                    # 非leader UAV执行本地扫描，发现高威胁目标则立即指派打击
                     recon_targets_collected = []
                     for uav in self.uav_dict.values():
                         if uav.status != UAVStatus.ACTIVE or uav.is_leader:
@@ -1143,47 +1200,39 @@ class SwarmMissionManager:
                         )
                         if detections:
                             recon_targets_collected.extend(detections)
+                    
                     if recon_targets_collected:
                         # 去重：按target id
-                        unique_targets = {}
-                        for t in recon_targets_collected:
-                            unique_targets[t.id] = t
+                        unique_targets = {t.id: t for t in recon_targets_collected}
                         self._assign_attackers_for_targets(list(unique_targets.values()), list(self.uav_dict.values()))
                         # 立即检查是否已有完成的攻击并上报
                         completions = self._check_attack_completion()
                         if completions:
                             destruction_dict = {uav_id: target_id for uav_id, target_id in completions}
                             self.send_attack_data(destruction_dict)
+                    
+                    # 检查是否所有领航者完成侦察路径
                     if leaders and all(l.is_path_complete for l in leaders):
                         if not attack_started:
                             current_phase = "ATTACK"
                             attack_started = True
                             self.current_phase = MissionType.ATTACK
+                            print(f"\n=== 切换到打击阶段 ===")
                             self.execute_attack_phase()
-                            
+                
                 elif current_phase == "ATTACK":
+                    # 检查是否有可用于封控的UAV
                     containment_eligible_uavs = [uav for uav in self.uav_dict.values() 
-                               if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
-    
-                    # 当有可用于封控的UAV时，切换到封控阶段
+                                                if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
+                    
+                    # 当有可用于封控的UAV时，立即切换到封控阶段
                     if containment_eligible_uavs and not containment_started:
                         current_phase = "CONTAINMENT"
                         containment_started = True
                         self.current_phase = MissionType.CONTAINMENT
-                        print(f"\n=== TCP仿真：切换到封控阶段 ===")
+                        print(f"\n=== 切换到封控阶段 ===")
                         print(f"发现 {len(containment_eligible_uavs)} 架UAV可用于封控任务")
                         self.execute_containment_phase()
-                
-                # 封控阶段逻辑
-                elif current_phase == "CONTAINMENT":
-                    containment_uavs = [uav for uav in self.uav_dict.values() 
-                                    if uav.current_mission == MissionType.CONTAINMENT and uav.status == UAVStatus.ACTIVE]
-                    
-                    # 封控阶段可以持续运行，或设置特定的结束条件
-                    # 这里可以添加封控阶段的结束条件，比如时间限制
-                    if frame_count * dt > 3600:  # 1小时后结束
-                        print(f"\n=== TCP仿真：封控阶段超时，任务结束 ===")
-                        break
                 
                 # === 位置更新逻辑 ===
                 if current_phase in ["PREPARATION", "RECONNAISSANCE"]:
@@ -1198,51 +1247,55 @@ class SwarmMissionManager:
                             target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
                             uav.set_formation_target(target_pos, leader_heading)
                 
-                # === 随机损毁检查（仅在准备和侦查阶段） ===
+                # === 随机损毁检查 ===
                 if current_phase in ["PREPARATION", "RECONNAISSANCE"]:
                     random_destructions = self._check_random_destruction(current_phase, dt)
                     if random_destructions:
-                        # 转换为字典格式并发送
                         destruction_dict = {attacker_id: uav_id for attacker_id, uav_id in random_destructions}
+                        print("随机损毁事件：", destruction_dict)
                         self.send_attack_data(destruction_dict)
                 
                 # 更新所有存活的无人机位置
                 for uav in self.uav_dict.values():
                     if uav.status == UAVStatus.ACTIVE:
-                        uav.update_position(1.5)
-                
+                        uav.update_position(dt)
+
                 # === 攻击任务完成检查 ===
-                if current_phase == "ATTACK":
+                if current_phase == "CONTAINMENT":
                     attack_completions = self._check_attack_completion()
                     if attack_completions:
-                        # 转换为字典格式并发送
                         destruction_dict = {uav_id: target_id for uav_id, target_id in attack_completions}
                         self.send_attack_data(destruction_dict)
+
+                    # if self.attack_assigned_uav_ids:
+                    #     all_attack_done = all(
+                    #         self.uav_dict[uav_id].status == UAVStatus.DESTROYED
+                    #         for uav_id in self.attack_assigned_uav_ids
+                    #     )
+                    # else:
+                    #     all_attack_done = True   # 没有攻击任务，直接算
+
+                    # if all_attack_done and not hasattr(self, '_metrics_already_computed'):
+                    #     print("\n=== 所有攻击 UAV 已摧毁，计算最终指标 ===")
+                    #     o1, d1, a1 = self.compute_metrics_reference()
+                    #     write_results_to_excel(
+                    #         uav_num=self.total_uavs,
+                    #         damage_ratio=DAMAGE_RATIO,
+                    #         o1_result=o1,
+                    #         d1_result=d1,
+                    #         a1_result=a1,
+                    #         filename="./result.xlsx"
+                    #     )
                 
-                # 通过TCP发布数据
-                self._publish_uav_data_to_tcp()
-                
-                # 定期状态报告
-                if frame_count % 100 == 0:
-                    print(f"当前阶段: {current_phase}, 仿真时间: {frame_count * dt:.1f}s")
-                    if current_phase in ["PREPARATION", "RECONNAISSANCE"]:
-                        leaders = [uav for uav in self.uav_dict.values() if uav.is_leader]
-                        completed = sum(1 for l in leaders if l.is_path_complete)
-                        print(f"  编队进度: {completed}/{len(leaders)} 个编队完成")
-                    elif current_phase == "ATTACK":
-                        attacking = [uav for uav in self.uav_dict.values() 
-                                if uav.current_mission == MissionType.ATTACK and uav.status == UAVStatus.ACTIVE]
-                        destroyed = [uav for uav in self.uav_dict.values() if uav.status == UAVStatus.DESTROYED]
-                        print(f"  攻击进度: {len(attacking)} 架UAV执行攻击任务, {len(destroyed)} 架已摧毁")
-                    elif current_phase == "CONTAINMENT":
-                        containment = [uav for uav in self.uav_dict.values() 
-                                    if uav.current_mission == MissionType.CONTAINMENT and uav.status == UAVStatus.ACTIVE]
-                        patrolling = sum(1 for uav in containment if uav.patrol_phase == "patrolling")
-                        print(f"  封控进度: {len(containment)} 架UAV执行封控任务, {patrolling} 架正在巡逻")
+                # === TCP数据发布（按固定频率）===
+                current_time = time.time()
+                if current_time - last_tcp_publish_time >= tcp_publish_interval:
+                    self._publish_uav_data_to_tcp()
+                    last_tcp_publish_time = current_time
                 
                 # 控制循环频率
                 elapsed = time.time() - loop_start_time
-                sleep_duration = dt - elapsed
+                sleep_duration = 0.25 - elapsed
                 if sleep_duration > 0:
                     time.sleep(sleep_duration)
                 
@@ -1259,10 +1312,14 @@ class SwarmMissionManager:
             print("Disconnecting TCP client...")
             self.tcp_client.disconnect()
 
-    def animate_complete_mission(self, max_steps=20000, dt=0.5, interval=20):
+    def animate_complete_mission(self, max_steps=20000):
         """可视化完整的四阶段任务：准备->侦察->打击->封控"""
         print("开始完整任务的动态仿真与可视化...")
-        
+        global TCP_PUBLISH_RATE, TCP_PUBLISH_RATE, SIMULATION_DT
+        # 使用统一的仿真参数
+        interval = 250
+        dt = TCP_PUBLISH_RATE * SIMULATION_DT / (1000 / interval)
+            
         # 1. ======== 动画设置 ========
         fig, ax = plt.subplots(figsize=(18, 14))
         ax.set_aspect('equal', adjustable='box')
@@ -1399,11 +1456,15 @@ class SwarmMissionManager:
         phase_start_frame = 0
         reconnaissance_started = False
         attack_started = False
-        containment_started = False  # 【新增】封控阶段标志
+        containment_started = False
+
+        last_tcp_publish_time = time.time()
+        frame_count = 0
         
         # 6. ======== 定义动画更新函数 ========
         def update(frame):
             nonlocal mission_phase, phase_start_frame, reconnaissance_started, attack_started, containment_started
+            nonlocal last_tcp_publish_time, frame_count
             
             # === 阶段切换逻辑 ===
             if mission_phase == "PREPARATION":
@@ -1414,6 +1475,7 @@ class SwarmMissionManager:
                         mission_phase = "RECONNAISSANCE"
                         phase_start_frame = frame
                         reconnaissance_started = True
+                        print(f"\n=== 切换到侦察阶段 ===")
                         for uav in self.uav_dict.values():
                             if len(uav.position_history) > 100:
                                 uav.position_history = uav.position_history[-100:]
@@ -1430,21 +1492,20 @@ class SwarmMissionManager:
                     )
                     if detections:
                         recon_targets_collected.extend(detections)
+
                 if recon_targets_collected:
-                    unique_targets = {}
-                    for t in recon_targets_collected:
-                        unique_targets[t.id] = t
+                    unique_targets = {t.id: t for t in recon_targets_collected}
                     self._assign_attackers_for_targets(list(unique_targets.values()), list(self.uav_dict.values()))
-                    # 检查是否有完成的攻击并上报
                     completions = self._check_attack_completion()
                     if completions:
                         destruction_dict = {uav_id: target_id for uav_id, target_id in completions}
-                        # self.send_attack_data(destruction_dict)  # 动画模式下如需联调可开启
+                        # self.send_attack_data(destruction_dict)  # 动画模式下不需要发送
                 if leaders and all(l.is_path_complete for l in leaders):
                     if not attack_started:
                         mission_phase = "ATTACK"
                         phase_start_frame = frame
                         attack_started = True
+                        print(f"\n=== 切换到打击阶段 ===")
                         self.execute_attack_phase()
 
             elif mission_phase == "ATTACK":
@@ -1453,7 +1514,6 @@ class SwarmMissionManager:
                                                 if uav.status == UAVStatus.ACTIVE and uav.current_mission != MissionType.ATTACK]
                     
                 # 当有可用于封控的UAV时，立即切换到封控阶段
-                # 注意：execute_attack_phase()已经设置了所有非攻击任务的UAV为CONTAINMENT状态
                 if containment_eligible_uavs and not containment_started:
                     mission_phase = "CONTAINMENT"
                     phase_start_frame = frame
@@ -1505,14 +1565,13 @@ class SwarmMissionManager:
                         target_pos = (leader_pos[0] + rotated_offset_x, leader_pos[1] + rotated_offset_y, leader_pos[2])
                         uav.set_formation_target(target_pos, leader_heading)
             
-            # TODO
             # === 随机损毁检查（仅在准备和侦查阶段） ===
             if mission_phase in ["PREPARATION", "RECONNAISSANCE"]:
                 random_destructions = self._check_random_destruction(mission_phase, dt)
                 if random_destructions:
                     # 转换为字典格式并发送
                     destruction_dict = {attacker_id: uav_id for attacker_id, uav_id in random_destructions}
-                    # self.send_attack_data(destruction_dict)
+                    # self.send_attack_data(destruction_dict)   # 动画模式下不需要发送
             
             # 更新所有存活的无人机位置
             for uav in self.uav_dict.values():
@@ -1525,7 +1584,7 @@ class SwarmMissionManager:
                 if attack_completions:
                     # 转换为字典格式并发送
                     destruction_dict = {uav_id: target_id for uav_id, target_id in attack_completions}
-                    # self.send_attack_data(destruction_dict)
+                    # self.send_attack_data(destruction_dict)  # 动画模式下不需要发送
             
             # === 绘图更新 ===
             artists = []
@@ -1614,63 +1673,67 @@ class SwarmMissionManager:
 
     # ! ==================== 指标计算 ====================
     def compute_metrics_reference(
-        self, detect_start_time: Optional[float],
-        detect_end_time_map: Dict[int, float],  # area_id -> end_ts（或 target_id -> end_ts）
-        # 打击相关
-        attack_start_time_map: Dict[int, float],  # target_id -> start_ts
-        attack_end_time_map: Dict[int, float],    # target_id -> end_ts
-        # 其他
-        total_target_num: int,
+        self,
         det_reward_weight: float = 200.0,
         atk_reward_weight: float = 100.0,
         decay_rate: float = 0.03,
     ) -> Tuple[float, float, float]:
-        """
-        返回: (O1_recognition_efficiency, D1_planning_efficiency, A1_attack_efficiency)
-        可将 detect_end_time_map 理解为“识别完成事件集合”（区域或目标层级皆可）。
-        """
-
-        # O1: 识别效率
-        if detect_start_time is not None and detect_end_time_map:
-            recognized_num = len(detect_end_time_map)
+        """计算并更新三个性能指标"""
+        
+        # 计算O1: 目标识别效率
+        if self.detect_start_time is not None and self.detect_end_time_map:
+            recognized_num = len(self.detect_end_time_map)
+            # 总识别时间 = 所有目标识别时间之和
             total_recognition_time = sum(
-                max(0.0, end_ts - detect_start_time) for end_ts in detect_end_time_map.values()
+                end - self.detect_start_time for end in self.detect_end_time_map.values()
             )
-            O1 = (recognized_num / total_recognition_time) if total_recognition_time > 0 else 0.0
+            self.O1_recognition_efficiency = recognized_num / total_recognition_time if recognized_num > 0 else 0.0
         else:
-            O1 = 0.0
-
-        # D1: 指数衰减收益 + 加权融合
+            self.O1_recognition_efficiency = 0.0
+        
+        # 计算D1: 任务决策效能
         def calculate_efficiency(t: float, w0: float, r: float) -> float:
             return w0 * math.exp(-r * max(0.0, t))
-
+        
+        # 识别部分奖励
         det_reward_total = 0.0
-        if detect_start_time is not None and detect_end_time_map:
-            for end_ts in detect_end_time_map.values():
-                det_reward_total += calculate_efficiency(end_ts - detect_start_time, det_reward_weight, decay_rate)
-
+        if self.detect_start_time is not None and self.detect_end_time_map:
+            for end_ts in self.detect_end_time_map.values():
+                response_time = end_ts - self.detect_start_time
+                det_reward_total += calculate_efficiency(response_time, det_reward_weight, decay_rate)
+        
+        # 打击部分奖励
         atk_reward_total = 0.0
-        for tid, s in attack_start_time_map.items():
-            e = attack_end_time_map.get(tid)
-            if e is not None:
-                atk_reward_total += calculate_efficiency(e - s, atk_reward_weight, decay_rate)
-
-        target_num = max(1, total_target_num)
-        alpha = target_num / (target_num + 4.0)
-        D1 = alpha * det_reward_total + (1.0 - alpha) * atk_reward_total
-
-        # A1: 打击效率
-        completed_ids = [tid for tid in attack_end_time_map.keys() if tid in attack_start_time_map]
-        attack_num = len(completed_ids)
-        if completed_ids:
-            min_start = min(attack_start_time_map[tid] for tid in completed_ids)
-            max_end = max(attack_end_time_map[tid] for tid in completed_ids)
-            total_attack_span = max(0.0, max_end - min_start)
-            A1 = (attack_num / total_attack_span) if total_attack_span > 0 else 0.0
+        for tid in self.attack_start_time_map:
+            if tid in self.attack_end_time_map:
+                response_time = self.attack_end_time_map[tid] - self.attack_start_time_map[tid]
+                atk_reward_total += calculate_efficiency(response_time, atk_reward_weight, decay_rate)
+        
+        # 目标总数
+        total_targets = max(1, self.total_target_num)
+        alpha = total_targets / (total_targets + 4.0)
+        self.D1_planning_efficiency = alpha * det_reward_total + (1.0 - alpha) * atk_reward_total
+        
+        # 计算A1: 打击效率
+        completed_attacks = [tid for tid in self.attack_end_time_map.keys() 
+                            if tid in self.attack_start_time_map]
+        if completed_attacks:
+            min_start = min(self.attack_start_time_map[tid] for tid in completed_attacks)
+            max_end = max(self.attack_end_time_map[tid] for tid in completed_attacks)
+            total_attack_time = max(0.0, max_end - min_start)
+            self.A1_attack_efficiency = len(completed_attacks) / total_attack_time if total_attack_time > 0 else 0.0
         else:
-            A1 = 0.0
-
-        return O1, D1, A1
+            self.A1_attack_efficiency = 0.0
+        
+        # 打印结果
+        print("\n" + "="*50)
+        print("性能指标计算结果:")
+        print(f"O1 目标识别效率: {self.O1_recognition_efficiency:.4f} (目标/秒)")
+        print(f"D1 任务决策效能: {self.D1_planning_efficiency:.2f} (综合评分)")
+        print(f"A1 打击效率: {self.A1_attack_efficiency:.4f} (目标/秒)")
+        print("="*50)
+        
+        return self.O1_recognition_efficiency, self.D1_planning_efficiency, self.A1_attack_efficiency
 
 
 # ==================== 使用示例 ====================
@@ -1719,7 +1782,7 @@ if __name__ == "__main__":
             mission_manager.execute_reconnaissance_phase()
             
             # mission_manager.animate_reconnaissance_phase()  # 可视化侦察阶段
-            mission_manager.animate_complete_mission(max_steps=10000, dt=1.5, interval=50)
+            mission_manager.animate_complete_mission(max_steps=10000)
 
         else:
             # 【联调模式】: 初始化TCP并执行后台仿真
@@ -1729,10 +1792,9 @@ if __name__ == "__main__":
             # 1. 规划所有路径
             mission_manager.execute_preparation_phase()
             mission_manager.execute_reconnaissance_phase()
-            # mission_manager.execute_attack_phase()
 
             # 2. 运行统一的TCP仿真循环
-            mission_manager.run_tcp_simulation(frequency=4.0)
+            mission_manager.run_tcp_simulation()
 
         print("仿真流程结束。")
 
@@ -1747,7 +1809,3 @@ if __name__ == "__main__":
         if mission_manager:
             mission_manager.disconnect()
         print("程序已安全退出。")
-
-
-
-  

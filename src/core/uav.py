@@ -73,6 +73,7 @@ class UAV:
         self.is_leader = True
         self.formation_target_pos = None
         self.set_speed_limits(15, 30, 40)
+        # self.set_speed_limits(30, 120, 180)
 
     def unset_as_leader(self):
         """取消领航者角色"""
@@ -85,6 +86,7 @@ class UAV:
         self.formation_offset = np.array(offset) # <--- 存储偏移量
         self.waypoints = []
         self.set_speed_limits(15, 45, 60)
+        # self.set_speed_limits(30, 180, 240)
 
     def set_formation_target(self, target_pos: Tuple[float, float, float], target_heading: float):
         """为跟随者设置其动态的队形目标点"""

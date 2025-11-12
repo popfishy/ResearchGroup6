@@ -26,10 +26,9 @@ class TCPClient:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(10.0)  # 10-second timeout for connection attempt
-            print(f"Connecting to server at {self.host}:{self.port}...")
+            print(f"\n ******成功连接到 {self.host}:{self.port}******")
             self.socket.connect((self.host, self.port))
             self.connected = True
-            print("Successfully connected to the server.")
 
             # 发送组标识信息
             group_id = "ResearchGroup6*"
@@ -75,7 +74,7 @@ class TCPClient:
                 message += '*'
             
             self.socket.sendall(message.encode('utf-8'))
-            print(f"Sent message: {message[:100]}...")
+            # print(f"Sent message: {message[:100]}...")
             return True
         except Exception as e:
             print(f"Failed to send message: {e}")
