@@ -45,7 +45,7 @@ DAMAGE_RATIO = 0.0
 SIMULATION_DT = 4  # 仿真时间步长（秒），对应4Hz更新频率
 TCP_PUBLISH_RATE = 4.0  # TCP数据发布频率（Hz）
 
-random.seed(42)
+random.seed(0)
 
 class SwarmMissionManager:
     """50架无人机集群任务管理器"""
@@ -171,23 +171,11 @@ class SwarmMissionManager:
         except Exception as e:
             print(f"错误: 区域覆盖路径生成失败: {e}")
 
-        # 5. 更新封控区域定义
-        # self.containment_zones = [
-        #     ContainmentZone(
-        #         id=1,
-        #         center=(5250, -3500, 100),
-        #         width=2500,
-        #         height=7000,
-        #         patrol_altitude=100,
-        #         patrol_speed=25,
-        #         assigned_uavs=[]
-        #     )
-        # ]
 
         self.containment_zones = [
             ContainmentZone(
                 id=1,
-                center=(0, 0, 100),
+                center=(8000, 0, 100),
                 width=2500,
                 height=2000,
                 patrol_altitude=100,
@@ -250,29 +238,26 @@ class SwarmMissionManager:
             # 随机抽取目标
             selected_enemies = random.sample(all_enemies, num_targets_to_use)
             self.attack_targets = selected_enemies
-            print(f"XML文件中总共有 {len(all_enemies)} 个敌方目标，随机抽取 {num_targets_to_use} 个（int({num_uavs_to_use}/6)={num_targets_to_use}）。")
+            print(f"XML文件中总共有 {len(all_enemies)} 个敌方目标，随机抽取 {num_targets_to_use} 个。")
             
             # 对于未被选中的目标，标记为已摧毁并在初始化时发送销毁消息
-            # unselected_enemies = [e for e in all_enemies if e not in selected_enemies]
-            # if unselected_enemies:
-            #     print(f"初始化时销毁 {len(unselected_enemies)} 个未被选中的敌方目标。")
-            #     # 使用虚拟攻击者ID（负数）表示系统初始化时销毁
-            #     # 为每个目标分配不同的虚拟攻击者ID，避免字典键冲突
-            #     destruction_events = {}
-            #     for idx, enemy in enumerate(unselected_enemies):
-            #         enemy.status = TargetStatus.DESTROYED
-            #         # 使用负数虚拟攻击者ID（-1, -2, -3...）表示系统初始化销毁
-            #         virtual_attacker_id = -(idx + 1)
-            #         destruction_events[virtual_attacker_id] = enemy.id
-                
-            #     # 发送销毁消息（如果TCP客户端已初始化）
-            #     if hasattr(self, 'tcp_client') and self.tcp_client and self.tcp_client.connected:
-            #         self.send_attack_data(destruction_events)
-            #     else:
-            #         # 如果TCP未连接，保存待发送的销毁事件，等待TCP连接后发送
-            #         self.pending_initial_destructions = destruction_events
-            #         print(f"注意: TCP客户端未连接，已标记 {len(unselected_enemies)} 个目标为已摧毁状态。")
-            #         print(f"待TCP连接后发送 {len(destruction_events)} 个初始化销毁消息。")
+            unselected_enemies = [e for e in all_enemies if e not in selected_enemies]
+            unselected_ids = [id.id for id in unselected_enemies]
+            if unselected_enemies:
+                print(f"初始化时销毁 {len(unselected_enemies)} 个未被选中的敌方目标: {unselected_ids}")
+                existing_uav_ids = list(self.uav_dict.keys())
+                destruction_events = {}
+                for idx, enemy in enumerate(unselected_enemies):
+                    enemy.status = TargetStatus.DESTROYED
+                    destruction_events[existing_uav_ids[idx]] = enemy.id
+                # 发送销毁消息（如果TCP客户端已初始化）
+                if hasattr(self, 'tcp_client') and self.tcp_client and self.tcp_client.connected:
+                    self.send_attack_data(destruction_events, init_flag=True)
+                else:
+                    # 如果TCP未连接，保存待发送的销毁事件，等待TCP连接后发送
+                    self.pending_initial_destructions = destruction_events
+                    print(f"注意: TCP客户端未连接，已标记 {len(unselected_enemies)} 个目标为已摧毁状态。")
+                    print(f"待TCP连接后发送 {len(destruction_events)} 个初始化销毁消息。")
         else:
             self.attack_targets = []
             print(f"XML文件中总共有 {len(all_enemies)} 个敌方目标，但计算出的目标数量为 {num_targets_to_use}，不使用任何敌方目标。")
@@ -551,7 +536,7 @@ class SwarmMissionManager:
 
             if tgt.id not in self.attack_start_time_map:
                 self.attack_start_time_map[tgt.id] = time.time()
-                print(f"【攻击开始】目标 {tgt.id} 在 {self.attack_start_time_map[tgt.id]:.2f}s 开始攻击")
+                print(f"【攻击开始】目标 {tgt.id} 在 {self.attack_start_time_map[tgt.id]:.2f}s 被攻击")
 
             if need <= 0:
                 continue
@@ -968,7 +953,7 @@ class SwarmMissionManager:
                         min_dist = dist
                         target = tgt
                 
-                if target and min_dist < 5.0:
+                if target:
                     # 检查是否已经报告过
                     event_key = (uav.id, target.id)
                     if event_key not in self.reported_destructions:
@@ -978,7 +963,6 @@ class SwarmMissionManager:
                         # 记录攻击完成时间（首次完成时）
                         if target.id not in self.attack_end_time_map:
                             self.attack_end_time_map[target.id] = time.time()
-                            print(f"【攻击完成】目标 {target.id} 在 {self.attack_end_time_map[target.id]:.2f}s 被摧毁")
 
                         attack_completions.append((uav.id, target.id))
                         self.reported_destructions.add(event_key)
@@ -986,7 +970,7 @@ class SwarmMissionManager:
         
         return attack_completions
     
-    def send_attack_data(self, destruction_events: Dict[int, int]):
+    def send_attack_data(self, destruction_events: Dict[int, int], init_flag = False):
         """
         报告并处理无人机或目标的损毁事件。
         - 构造并发送 "DestoryEntity" 格式的TCP消息。
@@ -1048,8 +1032,11 @@ class SwarmMissionManager:
                         print(f"系统初始化时销毁目标 {target_id}（不在当前任务列表中）。")
                         target_found = True  # 视为已处理，不打印警告
             
-            if not target_found:
-                print(f"警告: 在损毁事件中未找到目标ID {target_id}（攻击者ID: {attacker_id}）。")
+            # if not target_found:
+            #     print(f"初始化时，销毁未使用的目标 {target_id}")
+
+            if init_flag:
+                drone_is_death = 0
 
             # 2. 构造消息体（无论是否找到目标，都发送消息）
             agents_list.append({
@@ -1067,9 +1054,9 @@ class SwarmMissionManager:
         }
 
         if self.tcp_client and self.tcp_client.connected:
-            print("正在发送损毁信息...")
             self.tcp_client.send_json(destruction_payload)
-            print("损毁信息发送成功。")
+            # TODO  後面刪除
+            print(f"损毁信息发送成功: {destruction_payload}")
         else:
             print("警告: TCP客户端未连接，无法发送损毁信息。")
     
@@ -1267,25 +1254,26 @@ class SwarmMissionManager:
                         destruction_dict = {uav_id: target_id for uav_id, target_id in attack_completions}
                         self.send_attack_data(destruction_dict)
 
-                    # if self.attack_assigned_uav_ids:
-                    #     all_attack_done = all(
-                    #         self.uav_dict[uav_id].status == UAVStatus.DESTROYED
-                    #         for uav_id in self.attack_assigned_uav_ids
-                    #     )
-                    # else:
-                    #     all_attack_done = True   # 没有攻击任务，直接算
+                    if self.attack_assigned_uav_ids:
+                        all_attack_done = all(
+                            self.uav_dict[uav_id].status == UAVStatus.DESTROYED
+                            for uav_id in self.attack_assigned_uav_ids
+                        )
+                    else:
+                        all_attack_done = True   # 没有攻击任务，直接算
 
-                    # if all_attack_done and not hasattr(self, '_metrics_already_computed'):
-                    #     print("\n=== 所有攻击 UAV 已摧毁，计算最终指标 ===")
-                    #     o1, d1, a1 = self.compute_metrics_reference()
-                    #     write_results_to_excel(
-                    #         uav_num=self.total_uavs,
-                    #         damage_ratio=DAMAGE_RATIO,
-                    #         o1_result=o1,
-                    #         d1_result=d1,
-                    #         a1_result=a1,
-                    #         filename="./result.xlsx"
-                    #     )
+                    if all_attack_done and not hasattr(self, '_metrics_already_computed'):
+                        self._metrics_already_computed = True
+                        print("\n=== 所有攻击 UAV 已摧毁，计算最终指标 ===")
+                        o1, d1, a1 = self.compute_metrics_reference()
+                        write_results_to_excel(
+                            uav_num=self.total_uavs,
+                            damage_ratio=DAMAGE_RATIO,
+                            o1_result=o1,
+                            d1_result=d1,
+                            a1_result=a1,
+                            filename="./result.xlsx"
+                        )
                 
                 # === TCP数据发布（按固定频率）===
                 current_time = time.time()
@@ -1328,7 +1316,7 @@ class SwarmMissionManager:
         ax.set_ylabel('North (m)', fontsize=12)
         ax.grid(True, alpha=0.3)
         
-        # 【新增】设置固定的坐标轴范围，避免自动缩放导致的显示问题
+        # 设置固定的坐标轴范围，避免自动缩放导致的显示问题
         if self.uav_dict and self.attack_targets:
             all_x = []
             all_y = []
@@ -1633,7 +1621,7 @@ class SwarmMissionManager:
                 total_distance = 0
                 for uav in attacking_uavs:
                     if uav.attack_target_position is not None and uav.status == UAVStatus.ACTIVE:
-                        distance = np.linalg.norm(uav.position[:2] - uav.attack_target_position[:2])
+                        distance = np.linalg.norm(uav.position[:2] - uav.atta_publish_uav_data_to_tcpck_target_position[:2])
                         total_distance += distance
                         if distance <= 2.0:
                             arrived_count += 1
@@ -1753,6 +1741,8 @@ if __name__ == "__main__":
 
     # --- 1. 初始化 ---
     mission_manager = SwarmMissionManager()
+    if not VISUAL_DEBUG_MODE:
+        mission_manager._initialize_tcp_client()
     
     try:
         # --- 2. 设置外部接口 (使用 Mock Planner) ---
@@ -1787,8 +1777,6 @@ if __name__ == "__main__":
         else:
             # 【联调模式】: 初始化TCP并执行后台仿真
             print("--- 运行模式: TCP集成 ---")
-            mission_manager._initialize_tcp_client()
-            
             # 1. 规划所有路径
             mission_manager.execute_preparation_phase()
             mission_manager.execute_reconnaissance_phase()

@@ -54,9 +54,9 @@ def test_destruction_message():
     print(f"Selected Enemy Target ID: {enemy_target_id}\n")
 
     # 3. Initialize TCP Client
-    SERVER_HOST = '10.66.1.93'
+    SERVER_HOST = '10.66.1.86'
     SERVER_PORT = 13334
-    CLIENT_IP = '10.66.1.192'
+    CLIENT_IP = '10.66.1.102'
     
     tcp_client = TCPClient(host=SERVER_HOST, port=SERVER_PORT, client_ip=CLIENT_IP)
 
@@ -77,7 +77,7 @@ def test_destruction_message():
             "agents": [
                 {
                     "drone_id": uav_id,  # UAV作为攻击者
-                    "target_id": enemy_target_id,  # 敌方目标被摧毁
+                    "target_id": 2499,  # 敌方目标被摧毁
                     "droneIsDeath": 1  # UAV会死亡
                 }
             ]

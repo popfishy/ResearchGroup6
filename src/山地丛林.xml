@@ -1531,25 +1531,6 @@
             </entity>
             <entity obj-type="11" camp="2" attr="1" entity-name="蓝方编队" item-type="61" include="../model/entity/compound/army/蓝方编队.dom">
                 <basis>
-                    <objectname>哨所-2499</objectname>
-                    <position>
-                        <longitude>120.933</longitude>
-                        <latitude>24.7799</latitude>
-                        <altitude>-0.00</altitude>
-                    </position>
-                    <id>2499</id>
-                    <uuid>487fb4df-c230-4933-95e8-795f2400fac3</uuid>
-                    <afdiliate-id>60</afdiliate-id>
-                    <superior-id>60</superior-id>
-                    <entity-name-id>5</entity-name-id>
-                    <hasPosScenario>true</hasPosScenario>
-                </basis>
-                <tasks>
-                    <task task-type="31" desc="行进路线"/>
-                </tasks>
-            </entity>
-            <entity obj-type="11" camp="2" attr="1" entity-name="蓝方编队" item-type="61" include="../model/entity/compound/army/蓝方编队.dom">
-                <basis>
                     <objectname>蓝方干扰力量</objectname>
                     <position>
                         <longitude>0</longitude>

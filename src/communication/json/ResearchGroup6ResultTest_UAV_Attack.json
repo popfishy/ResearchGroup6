@@ -1,0 +1,12 @@
+{
+    "key": "DestoryEntity",
+    "name": "ResearchGroup6",
+    "timestamp": 1762931866.7908614,
+    "agents": [
+        {
+            "drone_id": 1296,
+            "target_id": 2499,
+            "droneIsDeath": 1
+        }
+    ]
+}
