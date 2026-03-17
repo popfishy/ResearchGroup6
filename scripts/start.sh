@@ -13,7 +13,7 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 
 # 定义变量
 UAV_NUM=7
-TEST_FLAG=0
+TEST_FLAG=1
 
 if [ $TEST_FLAG -eq 0 ]; then
     echo "正式模式，接收来自公司方的数据，从而运行代码"
@@ -44,6 +44,6 @@ sleep 1
 gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/communication/scripts && python receive_company_data.py; exec bash"
 gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/fixed_wing_formation/scripts && python GVF_ode_node.py; exec bash"
 sleep 0.5
-if [ $TEST_FLAG -eq 1 ]; then
-    gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/communication/scripts && python company_to_group6.py "
-fi
+#if [ $TEST_FLAG -eq 1 ]; then
+#    gnome-terminal -- bash -c "cd ~/ResearchGroup6/src/communication/scripts && python company_to_group6.py "
+#fi

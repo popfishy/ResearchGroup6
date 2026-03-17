@@ -5,20 +5,23 @@
 #### 一、使用说明
 
 1. 请[自行配置PX4和XTDrone环境](https://www.yuque.com/xtdrone/manual_cn/basic_config_13)(具体为ros noetic + px4 1.13)，下载QGC地面站，并将地面站QGroundControl.AppImage放在scripts文件夹下。
-1. 主从机设置：由课题七服务器担任主机最佳，需设置ip地址为10.66.1.**即可。建议设置为10.66.1.192为主机ip。公司方为windows系统，主机与windows通信需下载rosserial包，并运行roslaunch rosserial socket.launch即可。
-2. 阅读scripts脚本目录下的start.sh文件，修改相应配置，'dji'中修改为自己电脑密码。
+2. 主从机设置：由课题七服务器担任主机最佳，需设置ip地址为10.66.1.**即可。建议设置为10.66.1.192为主机ip。公司方为windows系统，主机与windows通信需下载rosserial包，并运行roslaunch rosserial socket.launch即可。
+3. 阅读scripts脚本目录下的start.sh文件，修改相应配置，'dji'中修改为自己电脑密码。
 
 ```
 echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 ```
 
 3. 运行scripts脚本目录下的start.sh即可。目前为正式版本。现对代码进行说明：
+
    - TEST_FLAG为是否开启测试，为0时接收公司方数据；为1时为测试模式，模拟公司方发布数据。
    - **测试版本模拟公司发送数据**，即在仿真初始化完毕后，运行/communication/scripts下的company_to_group6.py程序，发布话题"/ResearchGroup5ResultTest"给receive_company_data.py进行接收。正式版本不需要模拟发送公司数据，但是需要修改receive_company_data.py中接收话题名称为"/ResearchGroup5Result”。（两个版本不同的具体原因：ROS不能存在两个相同名称的话题）
    - communication/json文件夹下为各个课题具体数据，test.json为测试数据，用于测试版本。目前该数据由课题五提供，存在每个任务规划的path最后两个点相同，导致路径生成代码报错。（目前已解决）
    - 数据处理部分需注意，所有WGS84坐标系均转化为MAVROS使用的ENU坐标系，之后PX4接收到来自MAVROS的ENU坐标系数据后，会自行转化为NED坐标系。同理，无人机数据发送给公司时，需将来自gazebo的ENU数据转化为WGS84数据。
    - QGC地面站参数通过mavros_msgs下的ParamSet服务进行修改，具体代码可参考fixed_wing_formation下的QGC_param_set.py代码。
+
 4. 输入说明：
+
    ```
       {
          "agentId": 102501,                       无人机ID编号
@@ -43,7 +46,9 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
          "path"：[]                               课题五规划结果
        }
    ```
+
    输出说明：**根据位置信息、速度矢量和姿态角能够确定无人机在当前空间内的位姿。**
+
    ```
    {
       "key": "SwarmTrajectoryResults",                        
@@ -73,30 +78,16 @@ echo 'dji' | sudo -S chmod 777 QGroundControl.AppImage
 1. 四旋翼代码接入：思考如何修改QGC中的EKF参数（可参考QGC_param_set.py）     思考如何模拟深度数据（越简单越好）
 2. 如何解决固定翼飞机的local坐标系原点为px4上电位置（获取固定翼飞机在gazebo中初始化的位置表，课题七还没给我们）
 3. 空速无法到达60m/s，可能需要等比例缩放数据。（可行解决办法：[修改gazebo中plane模型动力相关参数，修改混控器](https://www.yuque.com/xtdrone/manual_cn/control_mapping)等）
+
  - 最终采用比例缩放数据，除了对目标点相对位置进行缩放外，需具体对无人机队形进行处理。
 
 
 
 ## 版本 V2.0  日期 2025.09.24
 
-
-
 主要修改成符合课题六仿真验证指标的流程数据。
 
-
-
-疑问：
-
-1.如果我要自己加具体经度维度高度如何设置？
-
-2.准备任务很奇怪。
-
-
-
-
-
 ```
-
 10.66.1.93
 
 # 连接大屏幕的命令
@@ -108,18 +99,10 @@ rosrun rosbridge_server rosbridge_websocket.py
 rosrun rosserial_server socket_node
 ```
 
-<img src="/home/yjq/.config/Typora/typora-user-images/image-20251021155236165.png" alt="image-20251021155236165" style="zoom:50%;" />
+1.新增start_simulation.py等python文件，用于25年第二阶段第三方测试使用，在公司上进行课题六的全流程仿真。
 
-drone id是攻击者id   target_id是被攻击者id
+2.新增core文件夹，用于新的xml文件解析和相关数据类型重新适配。
 
+3.新增测试xml文件，默认设置巡逻区域为(4000, 0, 0 )    (6500, 0, 0)   (4000, -7000,0)   (6500,-7000,0)。
 
-
-巡逻区域为(4000, 0, 0 )    (6500, 0, 0)   (4000, -7000,0)   (6500,-7000,0)
-
-
-
-
-
-
-
-ok，现在我们已经完成了准备阶段和侦查阶段。我们现在准备完成打击阶段的代码。我们首先需要明确，在打击阶段后，无人机群不存在leader和follower属性了，每个uav各自行动。我们需要明确任务优先级，即在任何阶段，若我们需要执行打击任务，则执行打击任务的uav优先执行打击任务。
+4.存在BUG问题，即公司方无法接收我发发送的高频无人机位置、姿态控制数据，其仅仅最多接收上限为4Hz，导致仿真画面无人机卡顿现象严重。公司方策略为自行插帧，但是其无人机姿态等数据解析方式与我方不一致，且它们自己不知道具体解析控制方式，解决不了。
