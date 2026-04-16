@@ -369,6 +369,64 @@ class UAV:
         return circle_path
 
     # ==================== 仿真核心更新方法 ====================
+    def _move_along_path(self, path: List[np.ndarray], distance_to_move: float, path_index: int, target_z: float = None) -> Tuple[float, int]:
+        """
+        沿路径移动的公共逻辑。
+
+        Args:
+            path: 路径点列表
+            distance_to_move: 本次更新需要移动的距离
+            path_index: 当前路径索引
+            target_z: 目标z坐标（可选，用于保持特定高度）
+
+        Returns:
+            (remaining_distance, new_path_index): 剩余未移动距离和更新后的路径索引
+        """
+        PATH_POINT_RADIUS = 2.0  # 到达路径点的判定半径
+
+        while distance_to_move > 0 and path_index < len(path):
+            current_target = path[path_index]
+            vector_to_target = current_target[:2] - self.position[:2]
+            distance_to_target = np.linalg.norm(vector_to_target)
+
+            if distance_to_target < PATH_POINT_RADIUS:
+                # 到达当前路径点
+                self.position[:2] = current_target[:2]
+                if target_z is not None:
+                    self.position[2] = target_z
+                self.heading = current_target[2] if len(current_target) > 2 else self.heading
+                distance_to_move -= distance_to_target
+                path_index += 1
+            else:
+                # 向目标移动
+                if distance_to_move >= distance_to_target:
+                    self.position[:2] = current_target[:2]
+                    if target_z is not None:
+                        self.position[2] = target_z
+                    self.heading = current_target[2] if len(current_target) > 2 else self.heading
+                    distance_to_move -= distance_to_target
+                    path_index += 1
+                else:
+                    # 部分移动
+                    direction = vector_to_target / distance_to_target
+                    move_vector = direction * distance_to_move
+                    self.position[:2] += move_vector
+                    if target_z is not None:
+                        self.position[2] = target_z
+                    distance_to_move = 0
+
+        return distance_to_move, path_index
+
+    def _finalize_position_update(self, dt: float, pos_before_update: np.ndarray):
+        """根据实际位移计算速度并更新航向的公共逻辑"""
+        if dt > 0:
+            velocity_3d = (self.position - pos_before_update) / dt
+            self.velocity[:2] = velocity_3d[:2]
+            self.velocity[2] = 0.0
+
+        if np.linalg.norm(self.velocity[:2]) > 0.1:
+            self.heading = np.arctan2(self.velocity[1], self.velocity[0])
+
     def update_position(self, dt: float):
         """更新无人机位置 - 根据任务类型调用不同逻辑"""
         if self.status != UAVStatus.ACTIVE:
@@ -385,19 +443,10 @@ class UAV:
             else:
                 self._update_follower_position(dt)
       
-        MAX_HISTORY_LENGTH = 200  # 只保留最近500个点
+        MAX_HISTORY_LENGTH = 200  # 只保留最近200个点
         self.position_history.append(self.position.copy())
         if len(self.position_history) > MAX_HISTORY_LENGTH:
             self.position_history = self.position_history[-MAX_HISTORY_LENGTH:]
-        
-        # 燃料消耗（如果需要的话）
-        # fuel_consumption_rate = 0.1
-        # self.fuel -= fuel_consumption_rate * dt
-        # self.fuel = max(0.0, self.fuel)
-        
-        # if self.fuel <= 0 and self.status != UAVStatus.DESTROYED:
-        #     print(f"UAV-{self.id} ran out of fuel and was destroyed.")
-        #     self.destroy()
 
     def _update_leader_position(self, dt: float):
         """领航者沿着预先规划的路径移动"""
@@ -443,47 +492,6 @@ class UAV:
         # 更新航向
         if np.linalg.norm(self.velocity[:2]) > 0.1:
             self.heading = np.arctan2(self.velocity[1], self.velocity[0])
-
-    # def _update_follower_position(self, dt: float):
-    #     """旋翼无人机的简化跟踪控制 - 质点模型"""
-    #     if self.formation_target_pos is None:
-    #         self.velocity = np.array([0.0, 0.0, 0.0])
-    #         return
-    #     target_pos_2d = self.formation_target_pos[:2]
-    #     current_pos_2d = self.position[:2]
-    #     vector_to_target = target_pos_2d - current_pos_2d
-    #     distance_to_target = np.linalg.norm(vector_to_target)
-      
-    #     # 到达判定
-    #     ACCEPTANCE_RADIUS = 2.0
-    #     if self.leader and self.leader.is_path_complete and distance_to_target < ACCEPTANCE_RADIUS:
-    #         self.position[:2] = target_pos_2d
-    #         self.heading = self.formation_target_heading
-    #         self.velocity = np.array([0.0, 0.0, 0.0])
-    #         return
-    #     if distance_to_target < 1e-6:
-    #         self.velocity = np.array([0.0, 0.0, 0.0])
-    #         return
-      
-    #     # 质点模型：直接朝目标点移动，无转弯半径限制
-    #     direction = vector_to_target / distance_to_target
-      
-    #     # 速度控制：距离远时全速，接近时减速
-    #     if distance_to_target > 50.0:  # 50米外全速
-    #         speed = self.current_speed
-    #     else:  # 50米内线性减速
-    #         speed = self.current_speed * (distance_to_target / 50.0)
-    #         speed = max(speed, self.min_speed * 0.3)  # 保持最小速度
-      
-    #     # 直接设置速度向量
-    #     self.velocity[:2] = direction * speed
-    #     self.velocity[2] = 0.0
-      
-    #     # 更新位置
-    #     self.position += self.velocity * dt
-      
-    #     # 更新航向（旋翼无人机可以瞬间转向）
-    #     self.heading = np.arctan2(self.velocity[1], self.velocity[0])
 
     def _update_follower_position(self, dt: float):
         """Simplified follower control logic - directly compute positions."""

@@ -3,9 +3,10 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-from typing import List, Dict, Tuple
-from .utils import *
+from typing import List, Tuple
+
 from .uav import UAV
+
 
 class PathPlanner:
     def __init__(self, dubins_planner=None, coverage_planner=None, patrol_planner=None):

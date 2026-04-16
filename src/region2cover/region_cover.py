@@ -64,11 +64,17 @@ class RegionCover:
 
         return regions
 
-    def pathcheck(self, path, dis):
+    def pathcheck(self, path):
+        """
+        检查路径点是否连续，去除重复点。
+        """
         checked_path = []
-        last_point = (path[0].point.getX(), path[0].point.getX(), path[0].point.getX())
+        last_point = None
         for point in path:
-            checked_path.append(point)
+            current_point = (point.point.getX(), point.point.getY(), point.point.getZ())
+            if last_point is None or current_point != last_point:
+                checked_path.append(point)
+                last_point = current_point
         return checked_path
 
     def cover_run(self, uav_velocity:float, turning_radius:float, log_time:str, cov_width:float=200):
@@ -126,17 +132,3 @@ class RegionCover:
         f2c.Visualizer.plot(path_dubins_cc)
         f2c.Visualizer.plot(swaths)
         f2c.Visualizer.save("../pic/" + log_time + "Region_Cover_Dubins_CC" + str(id) + ".png")
-
-
-if __name__ == "__main__":
-    # usage
-    dis = 41.67 / 30
-    region_cover = RegionCover(1, 1, [8081, 0, 3669], [8081, 0, 2636], [9519, 0, 2636], [9519, 0, 3669], is_plot=True)
-    region_cover.cover_run(log_time='1')
-    path_dubins_cc = region_cover.all_path[0]
-    print("size:", path_dubins_cc.size())
-    for i in range(path_dubins_cc.size() - 1):
-        last_x = path_dubins_cc[i].point.getX()
-        x = path_dubins_cc[i + 1].point.getX()
-        if abs(last_x - x) > 10:
-            print("i", i, "last_x", last_x, "x", x)
